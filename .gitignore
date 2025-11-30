@@ -51,6 +51,11 @@ data/benchmark/
 *.pkl
 *.joblib
 
+# Model training directories (keep code in src/)
+bucketsvision_v3/
+bucketsvision_v4/
+data/models/
+
 # Jupyter
 .ipynb_checkpoints/
 notebooks/
