@@ -64,3 +64,6 @@ notebooks/
 tmp/
 temp/
 *.tmp
+
+# Research (isolated experiments)
+research/

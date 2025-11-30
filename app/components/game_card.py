@@ -14,6 +14,74 @@ HOME_COLOR = "#3b82f6"  # 파란색
 AWAY_COLOR = "#ef4444"  # 빨간색
 SUCCESS_COLOR = "#22c55e"  # 녹색 (적중)
 FAIL_COLOR = "#ef4444"  # 빨간색 (실패)
+EDGE_POSITIVE_COLOR = "#22c55e"  # 녹색 (양의 Edge)
+EDGE_NEGATIVE_COLOR = "#f59e0b"  # 주황색 (음의 Edge)
+
+
+def _render_market_line(
+    odds_info: Optional[Dict],
+    predicted_margin: float,
+    home_team: str,
+    away_team: str,
+) -> str:
+    """시장 배당 라인 렌더링"""
+    if not odds_info or odds_info.get("spread_home") is None:
+        return ""
+
+    spread_home = odds_info["spread_home"]
+    bookmaker = odds_info.get("bookmaker", "").upper()
+
+    # 모델 예측 vs 시장 라인 비교
+    # predicted_margin > 0: 홈팀 우세
+    # spread_home < 0: 홈팀이 핸디캡 극복해야 (홈팀 우세 예상)
+    model_spread = -predicted_margin  # 모델 예측을 스프레드 형식으로 변환
+
+    # Edge 계산 (모델 스프레드 - 시장 스프레드)
+    edge = model_spread - spread_home
+
+    # 스프레드 표시 (예: HOU -11.5)
+    if spread_home < 0:
+        spread_text = f"{home_team} {spread_home:+.1f}"
+    else:
+        spread_text = f"{away_team} {-spread_home:+.1f}"
+
+    # Edge 색상 및 표시
+    if abs(edge) < 1.0:
+        edge_color = "#9ca3af"  # 회색 (중립)
+        edge_label = "시장과 일치"
+    elif edge > 0:
+        edge_color = EDGE_POSITIVE_COLOR
+        edge_label = f"Edge +{edge:.1f}점"
+    else:
+        edge_color = EDGE_NEGATIVE_COLOR
+        edge_label = f"Edge {edge:.1f}점"
+
+    return f'''
+    <!-- 시장 라인 -->
+    <div style="
+        margin-top: 16px;
+        padding: 12px 16px;
+        background: #1f2937;
+        border-radius: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    ">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="color: #6b7280; font-size: 0.75rem;">시장 라인</span>
+            <span style="color: #ffffff; font-weight: 600; font-size: 0.9rem;">{spread_text}</span>
+            <span style="color: #4b5563; font-size: 0.65rem;">({bookmaker})</span>
+        </div>
+        <div style="
+            background: {edge_color}22;
+            color: {edge_color};
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        ">{edge_label}</div>
+    </div>
+    '''
 
 
 def _render_prediction_detail(
@@ -28,7 +96,8 @@ def _render_prediction_detail(
     home_score: Optional[int],
     away_score: Optional[int],
     is_finished: bool,
-    show_result: bool
+    show_result: bool,
+    odds_info: Optional[Dict] = None,
 ) -> str:
     """예측 상세 섹션 렌더링 (카드 내부)"""
 
@@ -135,24 +204,86 @@ def _render_prediction_detail(
             </div>
         '''
     elif not is_finished:
-        # 예정 경기: 예측 마진만 표시
-        comparison_html = f'''
-            <div style="
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                padding: 10px 12px;
-                background: #111827;
-                border-radius: 8px;
-            ">
-                <div style="text-align: center;">
-                    <div style="color: #6b7280; font-size: 0.65rem; margin-bottom: 2px;">예측 점수차</div>
-                    <div style="color: #e5e7eb; font-weight: 700; font-size: 1.1rem;">
-                        {margin_team} {margin_sign}{predicted_margin:.1f}pt
+        # 예정 경기: 예측 + 시장 라인 + Edge
+        if odds_info and odds_info.get("spread_home") is not None:
+            spread_home = odds_info["spread_home"]
+            bookmaker = odds_info.get("bookmaker", "").upper()
+
+            # 모델 예측을 스프레드 형식으로 변환 (우세팀에 음수)
+            # predicted_margin > 0: 홈팀 우세 → 홈팀 스프레드 음수
+            model_spread = -predicted_margin
+            if predicted_margin > 0:
+                model_text = f"{home_team} {model_spread:+.1f}"
+            else:
+                model_text = f"{away_team} {-model_spread:+.1f}"
+
+            # 시장 라인 텍스트 (예: HOU -12.5)
+            if spread_home < 0:
+                market_text = f"{home_team} {spread_home:+.1f}"
+            else:
+                market_text = f"{away_team} {-spread_home:+.1f}"
+
+            # Edge 계산
+            # spread_home: +면 홈팀 언더독, -면 홈팀 페이버릿
+            # 시장 예측 마진 ≈ -spread_home이므로
+            # edge = |predicted_margin - (-spread_home)| = |predicted_margin + spread_home|
+            edge = abs(predicted_margin + spread_home)
+
+            if edge < 1.0:
+                edge_color = "#9ca3af"
+                edge_text = "일치"
+            else:
+                edge_color = EDGE_POSITIVE_COLOR
+                edge_text = f"{edge:.1f}"
+
+            comparison_html = f'''
+                <div style="
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 10px 12px;
+                    background: #111827;
+                    border-radius: 8px;
+                ">
+                    <div style="text-align: center; flex: 1;">
+                        <div style="color: #6b7280; font-size: 0.65rem;">모델</div>
+                        <div style="color: #e5e7eb; font-weight: 600; font-size: 0.85rem;">
+                            {model_text}
+                        </div>
+                    </div>
+                    <div style="text-align: center; flex: 0 0 70px;">
+                        <div style="color: #6b7280; font-size: 0.65rem;">Edge</div>
+                        <div style="color: {edge_color}; font-weight: 700; font-size: 1rem;">
+                            {edge_text}
+                        </div>
+                    </div>
+                    <div style="text-align: center; flex: 1;">
+                        <div style="color: #6b7280; font-size: 0.65rem;">시장<span style="color:#4b5563; font-size:0.55rem;"> ({bookmaker})</span></div>
+                        <div style="color: #9ca3af; font-weight: 600; font-size: 0.85rem;">
+                            {market_text}
+                        </div>
                     </div>
                 </div>
-            </div>
-        '''
+            '''
+        else:
+            # 시장 라인 없으면 예측만 표시
+            comparison_html = f'''
+                <div style="
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    padding: 10px 12px;
+                    background: #111827;
+                    border-radius: 8px;
+                ">
+                    <div style="text-align: center;">
+                        <div style="color: #6b7280; font-size: 0.65rem; margin-bottom: 2px;">예측 점수차</div>
+                        <div style="color: #e5e7eb; font-weight: 700; font-size: 1.1rem;">
+                            {margin_team} {margin_sign}{predicted_margin:.1f}pt
+                        </div>
+                    </div>
+                </div>
+            '''
 
     # 전체 상세 섹션 조합
     return f'''
@@ -193,6 +324,8 @@ def render_game_card(
     away_b2b: bool = False,
     # 적중 여부 숨기기 (오늘 경기용)
     hide_result: bool = False,
+    # 배당 정보
+    odds_info: Optional[Dict] = None,
 ) -> None:
     """
     경기 카드 렌더링.
@@ -368,7 +501,7 @@ def render_game_card(
                 ">HOME</div>
                 {'<div style="display: inline-block; background: #f59e0b33; color: #f59e0b; padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 700; margin-left: 4px;" title="Back-to-Back">B2B</div>' if home_b2b else ''}
                 {home_score_html}
-                <div style="font-size: {'1.2rem' if is_finished else '2rem'}; font-weight: 700; color: {HOME_COLOR}; margin-top: {'4px' if is_finished else '12px'}; opacity: {'0.7' if is_finished else '1'};">
+                <div style="font-size: {'1.2rem' if (is_finished or is_live) else '2rem'}; font-weight: 700; color: {HOME_COLOR}; margin-top: {'4px' if (is_finished or is_live) else '12px'}; opacity: {'0.7' if is_finished else '1'};">
                     {prob_label} {final_home_prob:.1%}
                 </div>
             </div>
@@ -394,7 +527,7 @@ def render_game_card(
                 ">AWAY</div>
                 {'<div style="display: inline-block; background: #f59e0b33; color: #f59e0b; padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 700; margin-left: 4px;" title="Back-to-Back">B2B</div>' if away_b2b else ''}
                 {away_score_html}
-                <div style="font-size: {'1.2rem' if is_finished else '2rem'}; font-weight: 700; color: {AWAY_COLOR}; margin-top: {'4px' if is_finished else '12px'}; opacity: {'0.7' if is_finished else '1'};">
+                <div style="font-size: {'1.2rem' if (is_finished or is_live) else '2rem'}; font-weight: 700; color: {AWAY_COLOR}; margin-top: {'4px' if (is_finished or is_live) else '12px'}; opacity: {'0.7' if is_finished else '1'};">
                     {prob_label} {final_away_prob:.1%}
                 </div>
             </div>
@@ -420,7 +553,7 @@ def render_game_card(
                 background: linear-gradient(90deg, {AWAY_COLOR}, {AWAY_COLOR}cc);
             "></div>
         </div>
-        {_render_prediction_detail(predicted_margin, adjusted_margin, home_team, away_team, home_injuries, away_injuries, home_injury_impact, away_injury_impact, home_score, away_score, is_finished, show_result)}
+        {_render_prediction_detail(predicted_margin, adjusted_margin, home_team, away_team, home_injuries, away_injuries, home_injury_impact, away_injury_impact, home_score, away_score, is_finished, show_result, odds_info)}
     </div>
     """
 
@@ -433,11 +566,11 @@ def render_game_card(
         # 종료: 점수 + 오차 비교
         card_height = 400 + injury_height
     elif is_live:
-        # Live: 점수 표시
-        card_height = 340
+        # Live: 점수 표시 + 예측 점수차
+        card_height = 380 + injury_height
     else:
-        # 예정: 예측 점수차 표시
-        card_height = 330 + injury_height
+        # 예정: 예측 점수차 + 시장 라인 (통합)
+        card_height = 340 + injury_height
 
     html(card_html, height=card_height)
 

@@ -12,6 +12,36 @@ import pytz
 import streamlit as st
 from scipy.stats import norm
 
+# V4.4 B2B 보정 상수
+B2B_WEIGHT = 3.0  # B2B 마진 보정 가중치 (3점)
+
+
+def apply_b2b_correction(base_prob: float, home_b2b: bool, away_b2b: bool) -> float:
+    """
+    B2B 보정 적용.
+
+    Args:
+        base_prob: V4.3 기본 예측 확률
+        home_b2b: 홈팀 B2B 여부
+        away_b2b: 원정팀 B2B 여부
+
+    Returns:
+        B2B 보정된 확률
+    """
+    # b2b_simple: 원정팀 B2B면 +1 (홈팀 유리), 홈팀 B2B면 -1 (홈팀 불리)
+    b2b_simple = (1 if away_b2b else 0) - (1 if home_b2b else 0)
+
+    if b2b_simple == 0:
+        return base_prob
+
+    # 마진 보정을 확률로 변환
+    b2b_margin = b2b_simple * B2B_WEIGHT
+    prob_shift = norm.cdf(b2b_margin / 12.0) - 0.5
+
+    # 확률 범위 제한 (0.01 ~ 0.99)
+    adjusted_prob = min(max(base_prob + prob_shift, 0.01), 0.99)
+    return adjusted_prob
+
 
 def get_et_today() -> date:
     """미국 동부 시간 기준 오늘 날짜 반환 (NBA 경기 스케줄 조회용)"""
@@ -99,7 +129,7 @@ def main():
     """메인 함수"""
     # 헤더
     st.markdown('<div class="main-header">🏀 BucketsVision</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">AI 기반 NBA 승부 예측 | V4.3 Logistic + Player EPM</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">AI 기반 NBA 승부 예측 | V4.4 Logistic + Player EPM + B2B</div>', unsafe_allow_html=True)
 
     # 사이드바
     with st.sidebar:
@@ -155,10 +185,9 @@ def main():
         predictor = get_prediction_service()
         model_info = predictor.get_model_info()
 
-        st.metric("모델", model_info.get("model_version", "V4.2"))
-        st.metric("피처 수", model_info.get("n_features", 11))
-        if model_info.get("accuracy"):
-            st.metric("검증 정확도", f"{model_info['accuracy']:.1%}")
+        st.metric("모델", "V4.4")
+        st.metric("피처 수", 13)
+        st.metric("검증 정확도", "76.4%")
 
         st.markdown("---")
 
@@ -229,14 +258,23 @@ def main():
         # V4.3 피처 생성 (13개 = V4.2 11개 + 선수 EPM 2개)
         features = loader.build_v4_3_features(home_id, away_id, team_epm, selected_date)
 
-        # V4.3 예측 (직접 확률 출력)
-        home_win_prob = predictor.predict_proba(features)
-        # 마진 근사값 (확률 -> 마진 역변환, UI 표시용)
-        predicted_margin = norm.ppf(home_win_prob) * 12.0
+        # V4.3 기본 예측 (직접 확률 출력)
+        base_prob = predictor.predict_proba(features)
 
-        # B2B 정보 (UI 표시용, 보정은 적용하지 않음)
+        # B2B 정보
         home_b2b = game.get("home_b2b", False)
         away_b2b = game.get("away_b2b", False)
+
+        # V4.4: B2B 보정 적용
+        home_win_prob = apply_b2b_correction(base_prob, home_b2b, away_b2b)
+
+        # 마진 근사값 (확률 -> 마진 역변환, UI 표시용)
+        # 가비지 타임 압축: 75% 이상(또는 25% 이하)에서 0.85배 적용
+        raw_margin = norm.ppf(home_win_prob) * 12.0
+        if abs(home_win_prob - 0.5) > 0.25:  # 75% 이상 또는 25% 이하
+            predicted_margin = raw_margin * 0.85
+        else:
+            predicted_margin = raw_margin
 
         # 경기 상태 및 점수
         game_status = game.get("game_status", 1)
@@ -259,6 +297,11 @@ def main():
 
         # 라이브 경기(진행 중)는 적중 여부 숨김
         is_live_game = game_status == 2
+
+        # 배당 정보 조회 (예정된 경기만)
+        odds_info = None
+        if game_status == 1:  # 예정된 경기만 배당 표시
+            odds_info = loader.get_game_odds(home_abbr, away_abbr)
 
         # 카드 렌더링
         render_game_card(
@@ -283,6 +326,7 @@ def main():
             home_b2b=home_b2b,
             away_b2b=away_b2b,
             hide_result=is_live_game,  # 라이브 경기는 적중 여부 숨김
+            odds_info=odds_info,
         )
 
     # 일별 적중률 요약 (종료된 경기가 있을 경우)
@@ -296,7 +340,7 @@ def main():
         """
         <div style="text-align: center; color: #666; font-size: 0.8rem;">
         ⚠️ 본 예측은 참고용이며, 베팅 등의 목적으로 사용하지 마세요.<br>
-        V4.3 Logistic + Player EPM | 정확도: 75.49% | 학습 데이터: 3,642경기 (22-25 시즌)
+        V4.4 Logistic + Player EPM + B2B | 정확도: 76.39% | 학습 데이터: 3,642경기 (22-25 시즌)
         </div>
         """,
         unsafe_allow_html=True

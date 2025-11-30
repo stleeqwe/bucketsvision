@@ -22,6 +22,7 @@ sys.path.insert(0, str(project_root))
 from app.services.dnt_api import DNTApiClient
 from src.data_collection.nba_stats_client import NBAStatsClient
 from src.data_collection.espn_injury_client import ESPNInjuryClient, ESPNInjury
+from src.data_collection.odds_api_client import OddsAPIClient, GameOdds
 from src.features.injury_impact import InjuryImpactCalculator, load_player_epm
 from src.utils.logger import logger
 from src.utils.memory import optimize_dataframe
@@ -40,6 +41,7 @@ class DataLoader:
         self.nba_client = NBAStatsClient()
         self.espn_client = ESPNInjuryClient()
         self.dnt_client = DNTApiClient()
+        self.odds_client = OddsAPIClient()
 
         # 캐시
         self._team_epm_date_cache: Dict[str, Dict[int, Dict]] = {}
@@ -47,6 +49,7 @@ class DataLoader:
         self._team_game_logs_cache: Optional[pd.DataFrame] = None
         self._team_stats_cache: Dict[int, Dict] = {}  # V4 피처용 팀 통계
         self._player_epm_cache: Dict[int, pd.DataFrame] = {}  # V4.3: 시즌별 선수 EPM
+        self._odds_cache: Optional[Dict[Tuple[str, str], GameOdds]] = None  # 배당 캐시
 
     def get_team_info(self, team_id: int) -> Dict:
         """팀 정보 조회"""
@@ -55,6 +58,45 @@ class DataLoader:
     def get_team_id(self, abbr: str) -> int:
         """팀 약어로 ID 조회"""
         return ABBR_TO_ID.get(abbr, 0)
+
+    def get_game_odds(self, home_abbr: str, away_abbr: str) -> Optional[Dict]:
+        """
+        경기별 배당 정보 조회.
+
+        Args:
+            home_abbr: 홈팀 약어 (예: "HOU")
+            away_abbr: 원정팀 약어 (예: "UTA")
+
+        Returns:
+            배당 정보 딕셔너리 또는 None
+        """
+        # 캐시가 없으면 로드
+        if self._odds_cache is None:
+            try:
+                self._odds_cache = self.odds_client.get_all_games_odds()
+                logger.info(f"Loaded odds for {len(self._odds_cache)} games")
+            except Exception as e:
+                logger.warning(f"Failed to load odds: {e}")
+                self._odds_cache = {}
+
+        # 캐시에서 조회
+        odds = self._odds_cache.get((home_abbr, away_abbr))
+        if odds:
+            return {
+                "spread_home": odds.spread_home,
+                "spread_away": odds.spread_away,
+                "spread_home_odds": odds.spread_home_odds,
+                "spread_away_odds": odds.spread_away_odds,
+                "moneyline_home": odds.moneyline_home,
+                "moneyline_away": odds.moneyline_away,
+                "total_line": odds.total_line,
+                "bookmaker": odds.bookmaker,
+            }
+        return None
+
+    def clear_odds_cache(self) -> None:
+        """배당 캐시 초기화 (새로고침 시)"""
+        self._odds_cache = None
 
     def load_team_epm(self, target_date: Optional[date] = None) -> Dict[int, Dict]:
         """
@@ -441,15 +483,38 @@ class DataLoader:
                     if away_score is not None:
                         away_score = int(away_score)
 
-                # 점수가 있고 과거 날짜면 종료로 처리 (scoreboardV2가 상태를 제대로 반환 안 할 때)
-                if home_score is not None and away_score is not None and game_date < et_today:
-                    game_status = 3  # 종료
+                # 점수가 있고 경기가 종료된 경우 처리
+                # leaguegamefinder의 result 필드: 'W'/'L' = 종료, None = 진행중
+                home_result = game_result.get('home', {})
+                away_result = game_result.get('away', {})
+                home_final = home_result.get('result') if home_result else None
+                away_final = away_result.get('result') if away_result else None
+                is_game_finished = home_final is not None and away_final is not None
+
+                # 라이브 경기 감지: leaguegamefinder에 점수는 있지만 result가 None
+                is_live_from_gamefinder = (
+                    home_result and away_result and
+                    home_result.get('pts') is not None and away_result.get('pts') is not None and
+                    home_final is None and away_final is None
+                )
+
+                if home_score is not None and away_score is not None:
+                    # 라이브 경기 체크를 먼저! (result=None이면 아직 진행중)
+                    if is_live_from_gamefinder:
+                        game_status = 2  # 라이브 경기 (점수 있고 result=None)
+                    elif is_game_finished:
+                        game_status = 3  # result='W'/'L'로 종료 확인됨
+                    elif game_date < et_today:
+                        game_status = 3  # 과거 날짜 (leaguegamefinder에 없는 경우)
 
                 # 로깅 (디버그용)
                 logger.debug(f"Game {game_id}: raw_status={raw_status}, live_period={live_period}, "
                            f"status_text={status_text}, final_status={game_status}, scores={home_score}-{away_score}")
                 if game_status == 2:
-                    logger.info(f"🔴 Live game {game_id}: period={live_period}, home={home_score}, away={away_score}")
+                    if is_live_from_gamefinder:
+                        logger.info(f"🔴 Live game {game_id} (from gamefinder): home={home_score}, away={away_score}")
+                    else:
+                        logger.info(f"🔴 Live game {game_id}: period={live_period}, home={home_score}, away={away_score}")
                 elif game_status == 3 and home_score is not None:
                     logger.info(f"✅ Finished game {game_id}: home={home_score}, away={away_score}")
 
