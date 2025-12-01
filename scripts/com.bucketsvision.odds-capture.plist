@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bucketsvision.odds-capture</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/stlee/Desktop/bucketsvision/scripts/auto_capture_odds.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- 한국 시간 오전 8시 (ET 오후 6시) - 3시간 전 캡처 -->
+        <dict>
+            <key>Hour</key>
+            <integer>8</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- 한국 시간 오전 10시 (ET 오후 8시) - 1시간 전 캡처 -->
+        <dict>
+            <key>Hour</key>
+            <integer>10</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- 한국 시간 오전 11시 (ET 오후 9시) - Closing 캡처 -->
+        <dict>
+            <key>Hour</key>
+            <integer>11</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- 한국 시간 오후 12시 (ET 오후 10시) - 늦은 경기 Closing -->
+        <dict>
+            <key>Hour</key>
+            <integer>12</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/stlee/Desktop/bucketsvision/logs/odds_capture.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/stlee/Desktop/bucketsvision/logs/odds_capture_error.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/stlee/Desktop/bucketsvision</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

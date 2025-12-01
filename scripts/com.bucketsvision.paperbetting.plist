@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bucketsvision.paperbetting</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/stlee/Desktop/bucketsvision/scripts/paper_betting.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/stlee/Desktop/bucketsvision</string>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- 오전 11시 (ET 기준 경기 시작 전 베팅 기록) -->
+        <dict>
+            <key>Hour</key>
+            <integer>11</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- 밤 11시 (대부분 경기 종료 후 결과 업데이트) -->
+        <dict>
+            <key>Hour</key>
+            <integer>23</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+        <!-- 새벽 3시 (서부 경기 종료 후 최종 업데이트) -->
+        <dict>
+            <key>Hour</key>
+            <integer>3</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/stlee/Desktop/bucketsvision/logs/paper_betting.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/stlee/Desktop/bucketsvision/logs/paper_betting_error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/Users/stlee/Desktop/bucketsvision</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
