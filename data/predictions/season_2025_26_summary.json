@@ -1,0 +1,10 @@
+{
+  "generated_at": "2025-11-30T22:57:33.389332",
+  "season": "2025-26",
+  "date_range": "2025-10-22 ~ 2025-11-30",
+  "total_games": 297,
+  "finished_games": 288,
+  "correct_predictions": 216,
+  "accuracy_pct": 75.0,
+  "mae": 9.93
+}

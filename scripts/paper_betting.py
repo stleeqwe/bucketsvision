@@ -32,6 +32,7 @@ UNIT_SIZE = 100  # $100
 DATA_DIR = PROJECT_ROOT / "data" / "paper_betting"
 BETS_FILE = DATA_DIR / "bets.json"
 REPORT_FILE = DATA_DIR / "BETTING_REPORT.md"
+ODDS_HISTORY_DIR = PROJECT_ROOT / "data" / "odds_history"
 
 
 def load_bets() -> Dict:
@@ -63,6 +64,53 @@ def save_bets(data: Dict):
     with open(BETS_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     logger.info(f"베팅 기록 저장: {BETS_FILE}")
+
+
+def load_closing_odds(target_date: date) -> Dict[str, Dict]:
+    """
+    해당 날짜의 closing 배당 로드 (가장 마지막 캡처된 파일 사용).
+
+    Returns:
+        {game_id: {moneyline_home, moneyline_away, ...}} 형태의 딕셔너리
+    """
+    date_str = target_date.isoformat()
+    odds_dir = ODDS_HISTORY_DIR / date_str
+
+    if not odds_dir.exists():
+        logger.warning(f"배당 히스토리 없음: {odds_dir}")
+        return {}
+
+    # 가장 최근 파일 찾기 (파일명 기준 정렬)
+    json_files = sorted(odds_dir.glob("*.json"), reverse=True)
+
+    if not json_files:
+        logger.warning(f"배당 파일 없음: {odds_dir}")
+        return {}
+
+    # 가장 최근 파일 로드
+    latest_file = json_files[0]
+    logger.info(f"Closing 배당 로드: {latest_file.name}")
+
+    with open(latest_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    # game_id를 키로 하는 딕셔너리로 변환
+    odds_by_game = {}
+    for game in data.get("games", []):
+        game_id = game.get("game_id")
+        odds = game.get("odds")
+        if game_id and odds:
+            odds_by_game[game_id] = {
+                "home_team": game.get("home_team"),
+                "away_team": game.get("away_team"),
+                "moneyline_home": odds.get("moneyline_home"),
+                "moneyline_away": odds.get("moneyline_away"),
+                "spread_home": odds.get("spread_home"),
+                "bookmaker": odds.get("bookmaker", "pinnacle"),
+            }
+
+    logger.info(f"Closing 배당 로드: {len(odds_by_game)}경기")
+    return odds_by_game
 
 
 def calculate_edge(model_prob: float, ml_home: float, ml_away: float) -> Dict:
@@ -112,8 +160,14 @@ def get_prediction_service():
     return V4PredictionService(model_dir, version="4.3")
 
 
-def get_predictions_for_date(target_date: date) -> List[Dict]:
-    """특정 날짜의 예측 및 배당 정보 가져오기"""
+def get_predictions_for_date(target_date: date, use_closing_odds: bool = True) -> List[Dict]:
+    """
+    특정 날짜의 예측 및 배당 정보 가져오기.
+
+    Args:
+        target_date: 대상 날짜
+        use_closing_odds: True면 저장된 closing 배당 사용, False면 실시간 배당 사용
+    """
     from app.services.data_loader import TEAM_INFO
 
     loader = get_data_loader()
@@ -126,6 +180,14 @@ def get_predictions_for_date(target_date: date) -> List[Dict]:
         return []
 
     logger.info(f"Found {len(games)} games for {target_date}")
+
+    # Closing 배당 로드 (경기 직전 캡처된 배당)
+    closing_odds = {}
+    if use_closing_odds:
+        closing_odds = load_closing_odds(target_date)
+        if not closing_odds:
+            logger.warning(f"{target_date}: Closing 배당 없음 - 베팅 기록 스킵")
+            return []
 
     # EPM 데이터 로드
     team_epm = loader.load_team_epm(target_date)
@@ -156,15 +218,23 @@ def get_predictions_for_date(target_date: date) -> List[Dict]:
             # V4.3 예측
             home_prob = predictor.predict_proba(features)
 
-            # 배당 정보 가져오기 (약어 사용!)
-            odds_info = loader.get_game_odds(home_abbr, away_abbr)
-
-            if not odds_info:
-                logger.debug(f"{home_abbr} vs {away_abbr}: 배당 정보 없음")
-                continue
-
-            ml_home = odds_info.get('moneyline_home')
-            ml_away = odds_info.get('moneyline_away')
+            # 배당 정보 가져오기
+            if use_closing_odds:
+                # Closing 배당 사용 (저장된 경기 직전 배당)
+                odds_info = closing_odds.get(game_id)
+                if not odds_info:
+                    logger.debug(f"{home_abbr} vs {away_abbr}: Closing 배당 없음 (game_id={game_id})")
+                    continue
+                ml_home = odds_info.get('moneyline_home')
+                ml_away = odds_info.get('moneyline_away')
+            else:
+                # 실시간 배당 사용
+                odds_info = loader.get_game_odds(home_abbr, away_abbr)
+                if not odds_info:
+                    logger.debug(f"{home_abbr} vs {away_abbr}: 배당 정보 없음")
+                    continue
+                ml_home = odds_info.get('moneyline_home')
+                ml_away = odds_info.get('moneyline_away')
 
             if ml_home is None or ml_away is None:
                 logger.debug(f"{home_abbr} vs {away_abbr}: ML 배당 없음")
@@ -192,9 +262,10 @@ def get_predictions_for_date(target_date: date) -> List[Dict]:
                 "home_ev": edge_data['ev_home'],
                 "away_edge": edge_data['edge_away'],
                 "away_ev": edge_data['ev_away'],
+                "odds_source": "closing" if use_closing_odds else "live",
             })
 
-            logger.info(f"{home_abbr} vs {away_abbr}: prob={home_prob:.1%}, edge_home={edge_data['edge_home']*100:+.1f}%, edge_away={edge_data['edge_away']*100:+.1f}%")
+            logger.info(f"{home_abbr} vs {away_abbr}: prob={home_prob:.1%}, edge_home={edge_data['edge_home']*100:+.1f}%, edge_away={edge_data['edge_away']*100:+.1f}% [{'closing' if use_closing_odds else 'live'}]")
 
         except Exception as e:
             logger.error(f"예측 오류 {game_id}: {e}")
@@ -205,14 +276,20 @@ def get_predictions_for_date(target_date: date) -> List[Dict]:
     return predictions
 
 
-def record_bets(target_date: date) -> int:
-    """Edge >= threshold인 경기에 베팅 기록"""
+def record_bets(target_date: date, use_closing_odds: bool = True) -> int:
+    """
+    Edge >= threshold인 경기에 베팅 기록.
+
+    Args:
+        target_date: 대상 날짜
+        use_closing_odds: True면 저장된 closing 배당 사용
+    """
     data = load_bets()
 
     # 이미 기록된 game_id 확인
     existing_ids = {b['game_id'] for b in data['bets']}
 
-    predictions = get_predictions_for_date(target_date)
+    predictions = get_predictions_for_date(target_date, use_closing_odds=use_closing_odds)
     new_bets = 0
 
     for pred in predictions:
@@ -464,35 +541,57 @@ def generate_report():
 
 
 def main():
-    """메인 실행"""
+    """
+    메인 실행.
+
+    새벽 3시 자동 실행 시:
+    1. 어제(ET 기준) 경기의 closing 배당으로 베팅 기록
+    2. 모든 pending 베팅 결과 업데이트
+    3. 리포트 생성
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Paper Betting Tracker")
-    parser.add_argument("date", nargs="?", help="날짜 (YYYY-MM-DD), 기본값: 오늘")
-    parser.add_argument("--update-all", action="store_true", help="모든 pending 베팅 결과 업데이트")
+    parser.add_argument("date", nargs="?", help="날짜 (YYYY-MM-DD), 기본값: 어제(ET)")
+    parser.add_argument("--update-all", action="store_true", help="모든 pending 베팅 결과 업데이트만")
     parser.add_argument("--report-only", action="store_true", help="리포트만 생성")
+    parser.add_argument("--live-odds", action="store_true", help="실시간 배당 사용 (테스트용)")
     args = parser.parse_args()
 
     if args.report_only:
         generate_report()
         return
 
-    # 결과 업데이트
+    # 결과 업데이트 (항상 먼저 실행)
     logger.info("=== 베팅 결과 업데이트 ===")
     updated = update_results()
     logger.info(f"업데이트된 베팅: {updated}건")
 
     if not args.update_all:
-        # 오늘 베팅 기록
+        # 베팅 기록 (closing 배당 사용)
         if args.date:
             target_date = date.fromisoformat(args.date)
         else:
-            # 미국 동부 시간 기준 오늘
+            # 미국 동부 시간 기준 어제 (새벽 3시 실행 시 어제 경기 처리)
             from zoneinfo import ZoneInfo
-            target_date = datetime.now(ZoneInfo("America/New_York")).date()
+            et_now = datetime.now(ZoneInfo("America/New_York"))
+            # 새벽 6시 이전이면 어제 날짜 사용
+            if et_now.hour < 6:
+                target_date = et_now.date() - timedelta(days=1)
+            else:
+                target_date = et_now.date()
 
-        logger.info(f"=== {target_date} 베팅 기록 ===")
-        new_bets = record_bets(target_date)
+        logger.info(f"=== {target_date} 베팅 기록 (closing 배당) ===")
+
+        # Closing 배당 사용 여부
+        use_closing = not args.live_odds
+
+        if use_closing:
+            logger.info("Closing 배당 사용 (경기 직전 캡처된 배당)")
+        else:
+            logger.info("실시간 배당 사용 (테스트 모드)")
+
+        new_bets = record_bets(target_date, use_closing_odds=use_closing)
         logger.info(f"새로운 베팅: {new_bets}건")
 
     # 리포트 생성

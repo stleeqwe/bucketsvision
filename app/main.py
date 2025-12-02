@@ -2,9 +2,16 @@
 🏀 BucketsVision - NBA 승부 예측 서비스
 
 Streamlit 메인 엔트리포인트
+
+V5.2 모델 사용:
+- 알고리즘: XGBoost
+- 피처: 11개 (EPM 4개 + Four Factors 3개 + 모멘텀 2개 + 피로도 2개)
+- B2B, 휴식일: 모델 피처로 통합 (학습에 반영)
+- 부상 영향: 후행 지표로 예측 후 조정
 """
 
 import sys
+import json
 from pathlib import Path
 from datetime import date, datetime, timedelta
 
@@ -12,12 +19,57 @@ import pytz
 import streamlit as st
 from scipy.stats import norm
 
-# V4.4 B2B 보정 상수
-B2B_WEIGHT = 3.0  # B2B 마진 보정 가중치 (3점)
+# V4.4 B2B 보정 상수 (비대칭 적용)
+B2B_AWAY_ONLY = 1.5   # 원정팀만 B2B: 홈팀 +1.5점
+B2B_HOME_ONLY = -1.0  # 홈팀만 B2B: 홈팀 -1.0점
+B2B_BOTH = 0.5        # 둘 다 B2B: 홈팀 +0.5점
+
+# V4.4 부상 보정 상수
+MAX_INJURY_SHIFT = 0.10  # 최대 부상 보정 한도 (±10%p)
+
+
+def apply_injury_correction(
+    base_prob: float,
+    home_prob_shift: float,
+    away_prob_shift: float
+) -> float:
+    """
+    부상 영향력 보정 적용 (V2).
+
+    Args:
+        base_prob: 기본 예측 확률 (홈팀 승리)
+        home_prob_shift: 홈팀 부상으로 인한 승률 감소 (% 단위, 양수)
+        away_prob_shift: 원정팀 부상으로 인한 승률 감소 (% 단위, 양수)
+
+    Returns:
+        부상 보정된 확률
+
+    공식:
+        - 홈팀 부상 → 홈팀 승률 감소 → base_prob 감소
+        - 원정팀 부상 → 원정팀 승률 감소 → base_prob 증가
+        - 최종 보정 = (away_shift - home_shift) / 100
+    """
+    # % 단위를 소수로 변환 (3.0% → 0.03)
+    home_shift = max(home_prob_shift, 0) / 100.0
+    away_shift = max(away_prob_shift, 0) / 100.0
+
+    # 부상 영향 차이 (양수 = 원정팀이 더 불리 = 홈팀 유리)
+    net_shift = away_shift - home_shift
+
+    if net_shift == 0:
+        return base_prob
+
+    # 최대 한도 적용
+    net_shift = max(min(net_shift, MAX_INJURY_SHIFT), -MAX_INJURY_SHIFT)
+
+    adjusted_prob = min(max(base_prob + net_shift, 0.01), 0.99)
+
+    return adjusted_prob
+
 
 def apply_b2b_correction(base_prob: float, home_b2b: bool, away_b2b: bool) -> float:
     """
-    B2B 보정 적용.
+    B2B 보정 적용 (비대칭).
 
     Args:
         base_prob: V4.3 기본 예측 확률
@@ -27,14 +79,21 @@ def apply_b2b_correction(base_prob: float, home_b2b: bool, away_b2b: bool) -> fl
     Returns:
         B2B 보정된 확률
     """
-    # b2b_simple: 원정팀 B2B면 +1 (홈팀 유리), 홈팀 B2B면 -1 (홈팀 불리)
-    b2b_simple = (1 if away_b2b else 0) - (1 if home_b2b else 0)
-
-    if b2b_simple == 0:
+    # 비대칭 B2B 마진 계산
+    if away_b2b and home_b2b:
+        # 둘 다 B2B: 홈팀 +0.5점 (원정 B2B가 더 힘듦)
+        b2b_margin = B2B_BOTH
+    elif away_b2b:
+        # 원정팀만 B2B: 홈팀 +1.5점
+        b2b_margin = B2B_AWAY_ONLY
+    elif home_b2b:
+        # 홈팀만 B2B: 홈팀 -1.0점
+        b2b_margin = B2B_HOME_ONLY
+    else:
+        # 둘 다 아님
         return base_prob
 
     # 마진 보정을 확률로 변환
-    b2b_margin = b2b_simple * B2B_WEIGHT
     prob_shift = norm.cdf(b2b_margin / 12.0) - 0.5
 
     # 확률 범위 제한 (0.01 ~ 0.99)
@@ -65,9 +124,15 @@ def format_date_kst(game_date: date) -> str:
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.services.predictor_v4 import V4PredictionService
+from app.services.predictor_v5 import V5PredictionService
 from app.services.data_loader import DataLoader, TEAM_INFO
-from app.components.game_card_v2 import render_game_card, render_no_games, render_day_summary, inject_card_styles
+from app.components.game_card_v2 import (
+    inject_card_styles,
+    render_game_card,
+    render_day_summary,
+    render_no_games
+)
+from app.theme import COLORS
 from app.components.team_roster import get_team_options, render_team_roster_page
 import pandas as pd
 
@@ -79,14 +144,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 다크 테마 스타일
+# 다크 테마 스타일 (COLORS 사용)
 st.markdown(
-    """
+    f"""
     <style>
-    .stApp {
-        background-color: #0e1117;
-    }
-    .main-header {
+    .stApp {{
+        background-color: {COLORS['bg_primary']};
+    }}
+    .main-header {{
         font-size: 3rem;
         font-weight: bold;
         text-align: center;
@@ -95,29 +160,43 @@ st.markdown(
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 30px;
-    }
-    .sub-header {
+    }}
+    .sub-header {{
         text-align: center;
-        color: #888;
+        color: {COLORS['text_secondary']};
         margin-bottom: 40px;
-    }
-    .metric-card {
-        background: #1a1a2e;
+    }}
+    .metric-card {{
+        background: {COLORS['bg_secondary']};
         border-radius: 10px;
         padding: 15px;
         text-align: center;
-    }
+    }}
+    /* 경기 구분선 흰색 */
+    hr {{
+        border-color: white !important;
+        border-top: 1px solid white !important;
+        background-color: white !important;
+    }}
+    [data-testid="stMarkdownContainer"] hr {{
+        border-color: white !important;
+        border-top: 1px solid white !important;
+        background-color: white !important;
+    }}
     </style>
     """,
     unsafe_allow_html=True
 )
 
+# 게임 카드 CSS 주입
+inject_card_styles()
+
 
 @st.cache_resource
 def get_prediction_service():
-    """V4.3 예측 서비스 로드 (캐시)"""
+    """V5.2 예측 서비스 로드 (캐시)"""
     model_dir = project_root / "bucketsvision_v4" / "models"
-    return V4PredictionService(model_dir, version="4.3")
+    return V5PredictionService(model_dir)
 
 
 def get_data_loader():
@@ -126,13 +205,200 @@ def get_data_loader():
     return DataLoader(data_dir)
 
 
+def load_paper_betting_data():
+    """Paper Betting 데이터 로드"""
+    bets_file = project_root / "data" / "paper_betting" / "bets.json"
+    if bets_file.exists():
+        with open(bets_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return None
+
+
+def render_paper_betting_page():
+    """Paper Betting 대시보드 렌더링"""
+    st.subheader("💰 Paper Betting Dashboard")
+
+    data = load_paper_betting_data()
+
+    if not data:
+        st.warning("Paper Betting 데이터가 없습니다. 스크립트를 먼저 실행해주세요.")
+        st.code("python scripts/paper_betting.py", language="bash")
+        return
+
+    summary = data.get("summary", {})
+    bets = data.get("bets", [])
+    metadata = data.get("metadata", {})
+
+    # 요약 통계
+    st.markdown("### 📊 Overall Performance")
+
+    total_bets = summary.get("total_bets", 0)
+    wins = summary.get("wins", 0)
+    losses = summary.get("losses", 0)
+    pending = summary.get("pending", 0)
+    total_profit = summary.get("total_profit", 0)
+    roi = summary.get("roi", 0)
+
+    settled = wins + losses
+    win_rate = (wins / settled * 100) if settled > 0 else 0
+
+    # 메트릭 카드
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("총 베팅", f"{total_bets}건")
+    with col2:
+        st.metric("승률", f"{win_rate:.1f}%" if settled > 0 else "-")
+    with col3:
+        profit_color = "normal" if total_profit >= 0 else "inverse"
+        st.metric("총 수익", f"${total_profit:+,.0f}", delta_color=profit_color)
+    with col4:
+        st.metric("ROI", f"{roi:+.1f}%")
+
+    # 상세 통계
+    st.markdown(f"""
+    <div style="
+        background: #1a1a2e;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
+    ">
+        <div style="display: flex; justify-content: space-around; text-align: center;">
+            <div>
+                <div style="color: #22c55e; font-size: 2rem; font-weight: bold;">{wins}</div>
+                <div style="color: #888;">승리</div>
+            </div>
+            <div>
+                <div style="color: #ef4444; font-size: 2rem; font-weight: bold;">{losses}</div>
+                <div style="color: #888;">패배</div>
+            </div>
+            <div>
+                <div style="color: #f59e0b; font-size: 2rem; font-weight: bold;">{pending}</div>
+                <div style="color: #888;">대기중</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 설정 정보
+    edge_threshold = metadata.get("edge_threshold", 0.05)
+    unit_size = metadata.get("unit_size", 100)
+    st.caption(f"⚙️ Edge 기준: ≥{edge_threshold*100:.0f}% | Unit: ${unit_size}")
+
+    st.markdown("---")
+
+    # 베팅 기록
+    st.markdown("### 📋 Betting History")
+
+    if not bets:
+        st.info("아직 베팅 기록이 없습니다.")
+        return
+
+    # 날짜별 그룹핑
+    from collections import defaultdict
+    daily_bets = defaultdict(list)
+    for bet in bets:
+        daily_bets[bet['date']].append(bet)
+
+    # 최신순 정렬
+    for bet_date in sorted(daily_bets.keys(), reverse=True):
+        day_bets = daily_bets[bet_date]
+
+        # 날짜별 소계
+        day_profit = sum(b.get('profit', 0) or 0 for b in day_bets if b['status'] == 'settled')
+        day_wins = sum(1 for b in day_bets if b.get('result') == 'win')
+        day_losses = sum(1 for b in day_bets if b.get('result') == 'loss')
+        day_pending = sum(1 for b in day_bets if b['status'] == 'pending')
+
+        # 날짜 헤더
+        profit_emoji = "🟢" if day_profit > 0 else ("🔴" if day_profit < 0 else "⚪")
+        pending_str = f" | ⏳ {day_pending} pending" if day_pending > 0 else ""
+
+        if day_wins + day_losses > 0:
+            st.markdown(f"#### {bet_date} — {day_wins}W-{day_losses}L {profit_emoji} ${day_profit:+,.0f}{pending_str}")
+        else:
+            st.markdown(f"#### {bet_date}{pending_str}")
+
+        # 개별 베팅
+        for bet in day_bets:
+            status = bet['status']
+            bet_team = bet['bet_team']
+            bet_odds = bet['bet_odds']
+            edge = bet['bet_edge'] * 100
+            home_team = bet['home_team']
+            away_team = bet['away_team']
+
+            if status == 'settled':
+                result = bet.get('result')
+                profit = bet.get('profit', 0)
+                home_score = bet.get('home_score', '?')
+                away_score = bet.get('away_score', '?')
+
+                if result == 'win':
+                    emoji = "✅"
+                    profit_str = f"**+${profit:.0f}**"
+                    color = "#22c55e"
+                else:
+                    emoji = "❌"
+                    profit_str = f"**-${abs(profit):.0f}**"
+                    color = "#ef4444"
+
+                st.markdown(f"""
+                <div style="
+                    background: #1e293b;
+                    border-left: 4px solid {color};
+                    padding: 12px 16px;
+                    margin: 8px 0;
+                    border-radius: 0 8px 8px 0;
+                ">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            {emoji} <strong>{bet_team}</strong> @{bet_odds:.2f}
+                            <span style="color: #64748b; font-size: 0.85rem;">
+                                | Edge {edge:.1f}% | {away_team} @ {home_team}
+                            </span>
+                        </div>
+                        <div>
+                            <span style="color: #94a3b8;">[{away_score}-{home_score}]</span>
+                            <span style="color: {color}; font-weight: bold; margin-left: 10px;">
+                                {'+' if profit > 0 else ''}{profit:.0f}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                # Pending
+                potential = bet.get('potential_profit', 0)
+                st.markdown(f"""
+                <div style="
+                    background: #1e293b;
+                    border-left: 4px solid #f59e0b;
+                    padding: 12px 16px;
+                    margin: 8px 0;
+                    border-radius: 0 8px 8px 0;
+                ">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            ⏳ <strong>{bet_team}</strong> @{bet_odds:.2f}
+                            <span style="color: #64748b; font-size: 0.85rem;">
+                                | Edge {edge:.1f}% | {away_team} @ {home_team}
+                            </span>
+                        </div>
+                        <div style="color: #94a3b8;">
+                            (potential: +${potential:.0f})
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("")
+
+
 
 
 def main():
     """메인 함수"""
-    # 카드 CSS 스타일 주입
-    inject_card_styles()
-
     # 헤더
     st.markdown('<div class="main-header">🏀 BucketsVision</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">AI 기반 NBA 승부 예측 | V4.4 Logistic + Player EPM + B2B</div>', unsafe_allow_html=True)
@@ -145,12 +411,20 @@ def main():
         if "page_mode" not in st.session_state:
             st.session_state.page_mode = "predictions"
 
+        def format_page_mode(x):
+            if x == "predictions":
+                return "🏀 경기 예측"
+            elif x == "team_roster":
+                return "👥 팀 로스터"
+            else:
+                return "💰 Paper Betting"
+
         page_mode = st.radio(
             "페이지 선택",
-            options=["predictions", "team_roster"],
-            format_func=lambda x: "🏀 경기 예측" if x == "predictions" else "👥 팀 로스터",
+            options=["predictions", "paper_betting", "team_roster"],
+            format_func=format_page_mode,
             key="page_mode_radio",
-            horizontal=True,
+            horizontal=False,
             label_visibility="collapsed"
         )
         st.session_state.page_mode = page_mode
@@ -348,6 +622,23 @@ def main():
                 st.rerun()
 
     # 페이지 모드에 따른 콘텐츠 렌더링
+    if page_mode == "paper_betting":
+        # Paper Betting 페이지
+        render_paper_betting_page()
+
+        # 푸터
+        st.markdown("---")
+        st.markdown(
+            """
+            <div style="text-align: center; color: #666; font-size: 0.8rem;">
+            ⚠️ Paper Betting은 가상 베팅입니다. 실제 베팅에 사용하지 마세요.<br>
+            배당 출처: Pinnacle (The Odds API)
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        return
+
     if page_mode == "team_roster":
         # 팀 로스터 페이지
         team_options = get_team_options()
@@ -476,7 +767,7 @@ def main():
         day_correct = 0
         day_error = 0.0
 
-        # 경기 예측
+        # 경기 예측 및 렌더링
         for game in games:
             game_status = game.get("game_status", 1)
 
@@ -489,18 +780,46 @@ def main():
             home_abbr = home_info.get("abbr", "UNK")
             away_abbr = away_info.get("abbr", "UNK")
 
-            # V4.3 피처 생성 (13개 = V4.2 11개 + 선수 EPM 2개)
-            features = loader.build_v4_3_features(home_id, away_id, team_epm, game_date)
-
-            # V4.3 기본 예측 (직접 확률 출력)
-            base_prob = predictor.predict_proba(features)
-
             # B2B 정보
             home_b2b = game.get("home_b2b", False)
             away_b2b = game.get("away_b2b", False)
 
-            # V4.4: B2B 보정 적용
-            home_win_prob = apply_b2b_correction(base_prob, home_b2b, away_b2b)
+            # V5.2 피처 생성 (11개 = EPM 4개 + Four Factors 3개 + 모멘텀 2개 + 피로도 2개)
+            # B2B와 휴식일은 모델 피처로 통합
+            features = loader.build_v5_2_features(
+                home_id, away_id, team_epm, game_date,
+                home_b2b=home_b2b, away_b2b=away_b2b
+            )
+
+            # V5.2 기본 예측 (XGBoost, B2B/휴식일 포함)
+            base_prob = predictor.predict_proba(features)
+
+            # 경기 상태 및 점수
+            game_status = game.get("game_status", 1)
+            home_score = game.get("home_score")
+            away_score = game.get("away_score")
+
+            # V5.2: 부상 영향력 계산 (예정된 경기만, 후행 지표)
+            home_injury_summary = None
+            away_injury_summary = None
+            home_prob_shift = 0.0
+            away_prob_shift = 0.0
+
+            if game_status == 1:  # 예정된 경기만 부상 분석
+                try:
+                    home_injury_summary = loader.get_injury_summary(home_abbr, game_date, team_epm)
+                    away_injury_summary = loader.get_injury_summary(away_abbr, game_date, team_epm)
+                    home_prob_shift = home_injury_summary.get("total_prob_shift", 0.0)
+                    away_prob_shift = away_injury_summary.get("total_prob_shift", 0.0)
+                except Exception:
+                    pass  # 부상 분석 실패 시 무시
+
+            # V5.2: 부상 보정 적용 (후행 지표)
+            home_win_prob = predictor.apply_injury_adjustment(
+                base_prob,
+                home_prob_shift,
+                away_prob_shift
+            )
 
             # 마진 근사값 (확률 -> 마진 역변환, UI 표시용)
             # 가비지 타임 압축: 75% 이상(또는 25% 이하)에서 0.85배 적용
@@ -509,11 +828,6 @@ def main():
                 predicted_margin = raw_margin * 0.85
             else:
                 predicted_margin = raw_margin
-
-            # 경기 상태 및 점수
-            game_status = game.get("game_status", 1)
-            home_score = game.get("home_score")
-            away_score = game.get("away_score")
 
             # 종료된 경기 적중률 및 오차 계산
             if game_status == 3 and home_score is not None and away_score is not None:
@@ -541,17 +855,15 @@ def main():
             if game_status == 1:  # 예정된 경기만 배당 표시
                 odds_info = loader.get_game_odds(home_abbr, away_abbr)
 
-            # 카드 렌더링 (커스텀 분석 포함)
+            # 게임 카드 렌더링 (V2)
             game_id = game.get("game_id", f"{home_abbr}_{away_abbr}")
-            enable_custom = game_status == 1 and odds_info is not None
-
             render_game_card(
                 home_team=home_abbr,
                 away_team=away_abbr,
                 home_name=home_info.get("name", "Unknown"),
                 away_name=away_info.get("name", "Unknown"),
-                home_color=home_info.get("color", "#666"),
-                away_color=away_info.get("color", "#666"),
+                home_color=home_info.get("color", COLORS["home"]),
+                away_color=away_info.get("color", COLORS["away"]),
                 game_time=game["game_time"],
                 predicted_margin=round(predicted_margin, 1),
                 home_win_prob=home_win_prob,
@@ -560,10 +872,12 @@ def main():
                 away_score=away_score,
                 home_b2b=home_b2b,
                 away_b2b=away_b2b,
-                hide_result=is_live_game,  # 라이브 경기는 적중 여부 숨김
+                hide_result=is_live_game,
                 odds_info=odds_info,
                 game_id=game_id,
-                enable_custom_input=enable_custom,
+                enable_custom_input=(game_status == 1),
+                home_injury_summary=home_injury_summary,
+                away_injury_summary=away_injury_summary,
             )
 
         # 일별 요약 (다중 날짜 모드에서도 각 날짜별로)
@@ -575,15 +889,16 @@ def main():
 
     # 전체 적중률 요약
     if date_mode == "daily":
-        # 일별 모드: 기존 방식
+        # 일별 모드 (V2)
         if grand_total_finished > 0:
             mae = grand_total_error / grand_total_finished
             render_day_summary(grand_total_finished, grand_total_correct, mae)
     else:
-        # 다중 날짜 모드: 전체 통계
+        # 다중 날짜 모드: 전체 통계 (COLORS 적용)
         if grand_total_finished > 0:
             accuracy = grand_total_correct / grand_total_finished * 100
             mae = grand_total_error / grand_total_finished
+            acc_color = COLORS['success'] if accuracy >= 50 else COLORS['error']
             st.markdown(
                 f"""
                 <div style="
@@ -594,24 +909,24 @@ def main():
                     margin: 20px 0;
                     text-align: center;
                 ">
-                    <div style="font-size: 1rem; color: #94a3b8; margin-bottom: 12px;">
+                    <div style="font-size: 1rem; color: {COLORS['text_secondary']}; margin-bottom: 12px;">
                         📊 전체 예측 성과
                     </div>
                     <div style="display: flex; justify-content: center; gap: 40px;">
                         <div>
-                            <div style="font-size: 0.8rem; color: #64748b;">적중률</div>
-                            <div style="font-size: 2.2rem; font-weight: 800; color: {'#22c55e' if accuracy >= 50 else '#ef4444'};">
+                            <div style="font-size: 0.8rem; color: {COLORS['text_muted']};">적중률</div>
+                            <div style="font-size: 2.2rem; font-weight: 800; color: {acc_color};">
                                 {accuracy:.1f}%
                             </div>
                         </div>
                         <div>
-                            <div style="font-size: 0.8rem; color: #64748b;">평균 오차</div>
-                            <div style="font-size: 2.2rem; font-weight: 800; color: #9ca3af;">
+                            <div style="font-size: 0.8rem; color: {COLORS['text_muted']};">평균 오차</div>
+                            <div style="font-size: 2.2rem; font-weight: 800; color: {COLORS['text_secondary']};">
                                 {mae:.1f}pt
                             </div>
                         </div>
                     </div>
-                    <div style="font-size: 0.9rem; color: #64748b; margin-top: 16px;">
+                    <div style="font-size: 0.9rem; color: {COLORS['text_muted']}; margin-top: 16px;">
                         {grand_total_finished}경기 중 {grand_total_correct}경기 적중
                     </div>
                 </div>

@@ -16,24 +16,11 @@
 
     <key>StartCalendarInterval</key>
     <array>
-        <!-- 오전 11시 (ET 기준 경기 시작 전 베팅 기록) -->
+        <!-- 새벽 3시 (KST 17:00, ET 03:00) - 모든 경기 종료 후 -->
+        <!-- closing 배당으로 베팅 기록 + 결과 업데이트 -->
         <dict>
             <key>Hour</key>
-            <integer>11</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <!-- 밤 11시 (대부분 경기 종료 후 결과 업데이트) -->
-        <dict>
-            <key>Hour</key>
-            <integer>23</integer>
-            <key>Minute</key>
-            <integer>30</integer>
-        </dict>
-        <!-- 새벽 3시 (서부 경기 종료 후 최종 업데이트) -->
-        <dict>
-            <key>Hour</key>
-            <integer>3</integer>
+            <integer>17</integer>
             <key>Minute</key>
             <integer>0</integer>
         </dict>

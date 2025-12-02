@@ -64,7 +64,6 @@ streamlit run app/main.py
 | `team_epm_z_diff` | 팀 EPM Z-score 차이 |
 | `team_oepm_z_diff` | 공격 EPM Z-score 차이 |
 | `team_depm_z_diff` | 수비 EPM Z-score 차이 |
-| `home_advantage` | 홈 어드밴티지 (상수: 3.0) |
 
 ## 모델
 

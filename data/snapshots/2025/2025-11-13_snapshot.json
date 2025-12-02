@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "version": "1.0",
+    "model": "V4.4 (Logistic + Player EPM + B2B)",
+    "created_at": "2025-11-30T14:01:30.400557+00:00",
+    "game_date_et": "2025-11-13",
+    "game_date_kst": "2025-11-14"
+  },
+  "summary": {
+    "total_games": 3,
+    "finished_games": 3,
+    "correct_predictions": 3,
+    "accuracy_pct": 100.0
+  },
+  "predictions": [
+    {
+      "game_id": "0022500225",
+      "game_time": "7:00 pm ET",
+      "home_team": "CLE",
+      "away_team": "TOR",
+      "home_b2b": true,
+      "away_b2b": false,
+      "home_win_prob": 48.9,
+      "predicted_margin": -0.3,
+      "predicted_winner": "TOR",
+      "game_status": 3,
+      "home_score": 113,
+      "away_score": 126,
+      "actual_winner": "TOR",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500226",
+      "game_time": "9:00 pm ET",
+      "home_team": "PHX",
+      "away_team": "IND",
+      "home_b2b": true,
+      "away_b2b": false,
+      "home_win_prob": 77.7,
+      "predicted_margin": 7.8,
+      "predicted_winner": "PHX",
+      "game_status": 3,
+      "home_score": 133,
+      "away_score": 98,
+      "actual_winner": "PHX",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500227",
+      "game_time": "9:00 pm ET",
+      "home_team": "UTA",
+      "away_team": "ATL",
+      "home_b2b": false,
+      "away_b2b": true,
+      "home_win_prob": 35.7,
+      "predicted_margin": -4.4,
+      "predicted_winner": "ATL",
+      "game_status": 3,
+      "home_score": 122,
+      "away_score": 132,
+      "actual_winner": "ATL",
+      "is_correct": true
+    }
+  ],
+  "integrity": {
+    "hash_algorithm": "SHA256",
+    "predictions_hash": "e7a231b5db0da9786d0d082ba2eb18bdbdc76d780756adbd11ffb5173fc7b8e9"
+  }
+}

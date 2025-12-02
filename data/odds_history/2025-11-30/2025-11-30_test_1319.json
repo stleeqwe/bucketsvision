@@ -1,0 +1,91 @@
+{
+  "captured_at": "2025-11-30T23:19:16.462910-05:00",
+  "game_date": "2025-11-30",
+  "games": [
+    {
+      "game_id": "0022500301",
+      "home_team": "UTA",
+      "away_team": "HOU",
+      "game_time": "3:00 pm ET",
+      "game_status": 3,
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": 5.65,
+        "moneyline_away": 1.17,
+        "spread_home": 12.0,
+        "spread_away": -12.0,
+        "total_line": 233.5
+      }
+    },
+    {
+      "game_id": "0022500302",
+      "home_team": "CLE",
+      "away_team": "BOS",
+      "game_time": "6:00 pm ET",
+      "game_status": 3,
+      "odds": null
+    },
+    {
+      "game_id": "0022500303",
+      "home_team": "NYK",
+      "away_team": "TOR",
+      "game_time": "6:00 pm ET",
+      "game_status": 3,
+      "odds": null
+    },
+    {
+      "game_id": "0022500304",
+      "home_team": "PHI",
+      "away_team": "ATL",
+      "game_time": "6:00 pm ET",
+      "game_status": 3,
+      "odds": null
+    },
+    {
+      "game_id": "0022500305",
+      "home_team": "POR",
+      "away_team": "OKC",
+      "game_time": "6:00 pm ET",
+      "game_status": 3,
+      "odds": null
+    },
+    {
+      "game_id": "0022500306",
+      "home_team": "MIN",
+      "away_team": "SAS",
+      "game_time": "7:00 pm ET",
+      "game_status": 3,
+      "odds": null
+    },
+    {
+      "game_id": "0022500307",
+      "home_team": "SAC",
+      "away_team": "MEM",
+      "game_time": "9:00 pm ET",
+      "game_status": 2,
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": 2.19,
+        "moneyline_away": 1.63,
+        "spread_home": 2.0,
+        "spread_away": -2.0,
+        "total_line": 227.5
+      }
+    },
+    {
+      "game_id": "0022500308",
+      "home_team": "LAL",
+      "away_team": "NOP",
+      "game_time": "9:30 pm ET",
+      "game_status": 2,
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": null,
+        "moneyline_away": null,
+        "spread_home": -19.5,
+        "spread_away": 19.5,
+        "total_line": 264.0
+      }
+    }
+  ]
+}

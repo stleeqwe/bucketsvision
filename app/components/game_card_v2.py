@@ -83,6 +83,103 @@ def calculate_betting_edge(
     }
 
 
+def render_injury_section(
+    home_team: str,
+    away_team: str,
+    home_injury_summary: Optional[Dict],
+    away_injury_summary: Optional[Dict],
+    game_id: str,
+    on_gtd_toggle: Optional[callable] = None,
+) -> Dict[str, bool]:
+    """
+    부상자 정보 섹션 렌더링 (간소화 버전).
+
+    모든 Out/GTD 선수를 나열하고, impact가 있는 선수만 수치 표시.
+    """
+    gtd_states = {}
+
+    home_out = home_injury_summary.get("out_players", []) if home_injury_summary else []
+    home_gtd = home_injury_summary.get("gtd_players", []) if home_injury_summary else []
+    away_out = away_injury_summary.get("out_players", []) if away_injury_summary else []
+    away_gtd = away_injury_summary.get("gtd_players", []) if away_injury_summary else []
+
+    has_injuries = home_out or home_gtd or away_out or away_gtd
+
+    if not has_injuries:
+        return gtd_states
+
+    st.markdown('''
+        <div style="background: #111827; border-radius: 8px; padding: 12px; margin-top: 10px;">
+            <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600; margin-bottom: 8px;">🏥 부상자 명단</div>
+    ''', unsafe_allow_html=True)
+
+    # 홈팀 부상자
+    if home_out or home_gtd:
+        st.markdown(f'''
+            <div style="margin-bottom: 8px;">
+                <span style="color: {HOME_COLOR}; font-weight: 700; font-size: 0.9rem;">{home_team}</span>
+            </div>
+        ''', unsafe_allow_html=True)
+
+        # Out 선수
+        for player in home_out:
+            _render_injury_player_simple(player, "Out", "#ef4444")
+
+        # GTD 선수
+        for player in home_gtd:
+            _render_injury_player_simple(player, "GTD", "#f59e0b")
+
+    # 원정팀 부상자
+    if away_out or away_gtd:
+        st.markdown(f'''
+            <div style="margin: 10px 0 8px 0;">
+                <span style="color: {AWAY_COLOR}; font-weight: 700; font-size: 0.9rem;">{away_team}</span>
+            </div>
+        ''', unsafe_allow_html=True)
+
+        # Out 선수
+        for player in away_out:
+            _render_injury_player_simple(player, "Out", "#ef4444")
+
+        # GTD 선수
+        for player in away_gtd:
+            _render_injury_player_simple(player, "GTD", "#f59e0b")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    return gtd_states
+
+
+def _render_injury_player_simple(player: Dict, status: str, status_color: str):
+    """부상 선수 행 렌더링 (V2 - prob_shift 기반)."""
+    name = player.get("name", "Unknown")
+    prob_shift = player.get("prob_shift", 0.0)  # 이미 % 단위
+
+    # GTD는 노란색, Out은 빨간색 (단순화)
+    badge_color = "#eab308" if status == "GTD" else "#ef4444"
+
+    # prob_shift가 있는 경우에만 수치 표시
+    if prob_shift > 0:
+        st.markdown(f'''
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #1f2937;">
+                <div>
+                    <span style="color: #e5e7eb; font-weight: 500; font-size: 0.85rem;">{name}</span>
+                    <span style="color: {badge_color}; font-size: 0.7rem; font-weight: 600; margin-left: 6px;">{status}</span>
+                </div>
+                <span style="color: #9ca3af; font-size: 0.8rem;">-{prob_shift:.1f}%</span>
+            </div>
+        ''', unsafe_allow_html=True)
+    else:
+        st.markdown(f'''
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #1f2937;">
+                <div>
+                    <span style="color: #6b7280; font-size: 0.85rem;">{name}</span>
+                    <span style="color: {badge_color}; font-size: 0.7rem; font-weight: 600; margin-left: 6px;">{status}</span>
+                </div>
+            </div>
+        ''', unsafe_allow_html=True)
+
+
 def render_game_card(
     home_team: str,
     away_team: str,
@@ -104,8 +201,18 @@ def render_game_card(
     odds_info: Optional[Dict] = None,
     game_id: Optional[str] = None,
     enable_custom_input: bool = False,
-) -> None:
-    """순수 Streamlit 네이티브 게임 카드 렌더링."""
+    home_injury_summary: Optional[Dict] = None,
+    away_injury_summary: Optional[Dict] = None,
+    home_prob_shift: float = 0.0,
+    away_prob_shift: float = 0.0,
+) -> Dict[str, bool]:
+    """
+    순수 Streamlit 네이티브 게임 카드 렌더링.
+
+    Returns:
+        GTD 선수 포함 여부 딕셔너리 (예정 경기일 경우)
+    """
+    gtd_states = {}
 
     final_home_prob = adjusted_win_prob if adjusted_win_prob is not None else home_win_prob
     final_away_prob = 1 - final_home_prob
@@ -126,19 +233,14 @@ def render_game_card(
     # 카드 스타일 결정
     if show_result:
         border_color = SUCCESS_COLOR if is_correct else FAIL_COLOR
-        bg_gradient = f"linear-gradient(145deg, {'#1a2e1a' if is_correct else '#2e1a1a'} 0%, #161b26 100%)"
-        result_text = "✓ 적중" if is_correct else "✗ 실패"
-        result_bg = SUCCESS_COLOR if is_correct else FAIL_COLOR
+        # 적중: 초록 음영, 미적중: 빨강 음영 (눈에 띄게)
+        bg_gradient = f"linear-gradient(145deg, {'#1a4d2e' if is_correct else '#4d1a1a'} 0%, {'#0f3d1f' if is_correct else '#3d0f0f'} 100%)"
     elif is_live:
         border_color = LIVE_COLOR
-        bg_gradient = "linear-gradient(145deg, #2a2517 0%, #161b26 100%)"
-        result_text = None
-        result_bg = None
+        bg_gradient = "linear-gradient(145deg, #4d3d1a 0%, #3d2f0f 100%)"
     else:
         border_color = "#2d3748"
-        bg_gradient = "linear-gradient(145deg, #1e2433 0%, #161b26 100%)"
-        result_text = None
-        result_bg = None
+        bg_gradient = "#161b22"
 
     # 상태 텍스트
     if game_status == 3:
@@ -152,15 +254,20 @@ def render_game_card(
         status_color = "#9ca3af"
 
     # 카드 시작 - 전체를 감싸는 div
-    card_style = f"border: 2px solid {border_color}; border-radius: 16px; padding: 20px; margin: 12px 0; background: {bg_gradient};"
+    card_style = f"border: 2px solid {border_color}; border-radius: 12px; overflow: hidden; margin: 12px 0; background: {bg_gradient};"
 
     st.markdown(f'<div style="{card_style}">', unsafe_allow_html=True)
 
-    # 결과 배지 (종료된 경기)
-    if result_text:
+    # 카드 내부 패딩 컨테이너
+    st.markdown('<div style="padding: 20px;">', unsafe_allow_html=True)
+
+    # 적중/실패 배지 (종료된 경기)
+    if show_result:
+        result_text = "✓ 적중" if is_correct else "✗ 실패"
+        result_color = SUCCESS_COLOR if is_correct else FAIL_COLOR
         st.markdown(f'''
-            <div style="text-align: right; margin-bottom: -10px;">
-                <span style="background: {result_bg}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;">{result_text}</span>
+            <div style="text-align: right; margin-bottom: 8px;">
+                <span style="color: {result_color}; font-size: 0.8rem; font-weight: 600;">{result_text}</span>
             </div>
         ''', unsafe_allow_html=True)
 
@@ -190,7 +297,8 @@ def render_game_card(
 
         # 점수 (종료/라이브)
         if is_finished or is_live:
-            score_color = "#ffffff" if (is_finished and actual_home_win) or (is_live and home_score > away_score) else "#6b7280"
+            is_home_winner = (is_finished and actual_home_win) or (is_live and home_score > away_score)
+            score_color = "#ffffff" if is_home_winner else "#4b5563"
             st.markdown(f'<div style="text-align: center; font-size: 2rem; font-weight: 800; color: {score_color}; margin-top: 8px;">{home_score}</div>', unsafe_allow_html=True)
 
         # 확률
@@ -217,7 +325,8 @@ def render_game_card(
 
         # 점수 (종료/라이브)
         if is_finished or is_live:
-            score_color = "#ffffff" if (is_finished and not actual_home_win) or (is_live and away_score > home_score) else "#6b7280"
+            is_away_winner = (is_finished and not actual_home_win) or (is_live and away_score > home_score)
+            score_color = "#ffffff" if is_away_winner else "#4b5563"
             st.markdown(f'<div style="text-align: center; font-size: 2rem; font-weight: 800; color: {score_color}; margin-top: 8px;">{away_score}</div>', unsafe_allow_html=True)
 
         # 확률
@@ -227,9 +336,9 @@ def render_game_card(
 
     # 확률 바
     st.markdown(f'''
-        <div style="height: 12px; background: #1f2937; border-radius: 6px; overflow: hidden; display: flex; margin: 16px 0;">
-            <div style="width: {home_pct:.1f}%; height: 100%; background: linear-gradient(90deg, {HOME_COLOR}cc, {HOME_COLOR});"></div>
-            <div style="width: {away_pct:.1f}%; height: 100%; background: linear-gradient(90deg, {AWAY_COLOR}, {AWAY_COLOR}cc);"></div>
+        <div style="height: 8px; background: #1f2937; border-radius: 4px; overflow: hidden; display: flex; margin: 16px 0;">
+            <div style="width: {home_pct:.1f}%; height: 100%; background: {HOME_COLOR};"></div>
+            <div style="width: {away_pct:.1f}%; height: 100%; background: {AWAY_COLOR};"></div>
         </div>
     ''', unsafe_allow_html=True)
 
@@ -241,8 +350,23 @@ def render_game_card(
         game_id, enable_custom_input
     )
 
+    # 부상자 정보 섹션 (예정된 경기만)
+    if game_status == 1 and (home_injury_summary or away_injury_summary):
+        gtd_states = render_injury_section(
+            home_team=home_team,
+            away_team=away_team,
+            home_injury_summary=home_injury_summary,
+            away_injury_summary=away_injury_summary,
+            game_id=game_id or f"{home_team}_{away_team}",
+        )
+
+    # 패딩 컨테이너 종료
+    st.markdown('</div>', unsafe_allow_html=True)
+
     # 카드 종료
     st.markdown('</div>', unsafe_allow_html=True)
+
+    return gtd_states
 
 
 def _render_bottom_section(
@@ -281,7 +405,7 @@ def _render_bottom_section(
                 </div>
                 <div style="text-align: center; flex: 1;">
                     <div style="color: #6b7280; font-size: 0.7rem;">실제</div>
-                    <div style="color: #fff; font-weight: 600;">{actual_text}</div>
+                    <div style="color: #e5e7eb; font-weight: 600;">{actual_text}</div>
                 </div>
             </div>
         ''', unsafe_allow_html=True)
@@ -310,29 +434,29 @@ def _render_bottom_section(
                 hp, ap = edge_data['pinnacle_home_prob'], edge_data['pinnacle_away_prob']
 
                 st.markdown(f'''
-                    <div style="background: #111827; border-radius: 10px; padding: 14px; margin-top: 8px;">
-                        <div style="color: #f59e0b; font-size: 0.85rem; font-weight: 700; margin-bottom: 12px;">💰 모델 Edge (vs Pinnacle)</div>
+                    <div style="background: #111827; border-radius: 8px; padding: 12px; margin-top: 8px;">
+                        <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600; margin-bottom: 10px;">💰 모델 Edge (vs Pinnacle)</div>
                         <table style="width: 100%; font-size: 0.85rem; border-collapse: collapse;">
-                            <tr style="color: #9ca3af; font-size: 0.75rem; font-weight: 600;">
-                                <td style="padding: 8px 4px;">팀</td>
-                                <td style="text-align: center; padding: 8px 4px;">🤖 모델</td>
-                                <td style="text-align: center; padding: 8px 4px;">📊 시장</td>
-                                <td style="text-align: center; padding: 8px 4px;">Edge</td>
-                                <td style="text-align: center; padding: 8px 4px;">EV</td>
+                            <tr style="color: #4b5563; font-size: 0.7rem;">
+                                <td style="padding: 6px 4px; width: 35%;">팀</td>
+                                <td style="text-align: right; padding: 6px 4px; width: 16%;">모델</td>
+                                <td style="text-align: right; padding: 6px 4px; width: 16%;">시장</td>
+                                <td style="text-align: right; padding: 6px 4px; width: 16%;">Edge</td>
+                                <td style="text-align: right; padding: 6px 4px; width: 17%;">EV</td>
                             </tr>
-                            <tr style="border-top: 1px solid #374151;">
-                                <td style="color: {HOME_COLOR}; font-weight: 700; padding: 10px 4px; font-size: 0.9rem;">{home_team} <span style="color: #6b7280; font-size: 0.75rem;">@{ml_home:.2f}</span></td>
-                                <td style="text-align: center; color: #ffffff; font-weight: 700; padding: 10px 4px; font-size: 1rem;">{final_home_prob*100:.1f}%</td>
-                                <td style="text-align: center; color: #fbbf24; font-weight: 600; padding: 10px 4px; font-size: 1rem;">{hp*100:.1f}%</td>
-                                <td style="text-align: center; color: {edge_color(he)}; font-weight: 800; padding: 10px 4px; font-size: 1rem;">{he*100:+.1f}%</td>
-                                <td style="text-align: center; color: {ev_color(hev)}; font-weight: 700; padding: 10px 4px; font-size: 0.9rem;">{hev*100:+.1f}%</td>
+                            <tr style="border-top: 1px solid #1f2937;">
+                                <td style="color: {HOME_COLOR}; font-weight: 600; padding: 8px 4px;">{home_team} <span style="color: #4b5563; font-size: 0.75rem;">@{ml_home:.2f}</span></td>
+                                <td style="text-align: right; color: #e5e7eb; font-weight: 600; padding: 8px 4px;">{final_home_prob*100:.1f}%</td>
+                                <td style="text-align: right; color: #9ca3af; padding: 8px 4px;">{hp*100:.1f}%</td>
+                                <td style="text-align: right; color: {edge_color(he)}; font-weight: 700; padding: 8px 4px;">{he*100:+.1f}%</td>
+                                <td style="text-align: right; color: #9ca3af; padding: 8px 4px;">{hev*100:+.1f}%</td>
                             </tr>
-                            <tr style="border-top: 1px solid #374151;">
-                                <td style="color: {AWAY_COLOR}; font-weight: 700; padding: 10px 4px; font-size: 0.9rem;">{away_team} <span style="color: #6b7280; font-size: 0.75rem;">@{ml_away:.2f}</span></td>
-                                <td style="text-align: center; color: #ffffff; font-weight: 700; padding: 10px 4px; font-size: 1rem;">{final_away_prob*100:.1f}%</td>
-                                <td style="text-align: center; color: #fbbf24; font-weight: 600; padding: 10px 4px; font-size: 1rem;">{ap*100:.1f}%</td>
-                                <td style="text-align: center; color: {edge_color(ae)}; font-weight: 800; padding: 10px 4px; font-size: 1rem;">{ae*100:+.1f}%</td>
-                                <td style="text-align: center; color: {ev_color(aev)}; font-weight: 700; padding: 10px 4px; font-size: 0.9rem;">{aev*100:+.1f}%</td>
+                            <tr style="border-top: 1px solid #1f2937;">
+                                <td style="color: {AWAY_COLOR}; font-weight: 600; padding: 8px 4px;">{away_team} <span style="color: #4b5563; font-size: 0.75rem;">@{ml_away:.2f}</span></td>
+                                <td style="text-align: right; color: #e5e7eb; font-weight: 600; padding: 8px 4px;">{final_away_prob*100:.1f}%</td>
+                                <td style="text-align: right; color: #9ca3af; padding: 8px 4px;">{ap*100:.1f}%</td>
+                                <td style="text-align: right; color: {edge_color(ae)}; font-weight: 700; padding: 8px 4px;">{ae*100:+.1f}%</td>
+                                <td style="text-align: right; color: #9ca3af; padding: 8px 4px;">{aev*100:+.1f}%</td>
                             </tr>
                         </table>
                     </div>
@@ -341,8 +465,8 @@ def _render_bottom_section(
                 # 커스텀 입력 섹션 (카드 내부에 통합!)
                 if enable_custom_input and game_id:
                     st.markdown('''
-                        <div style="background: #0d1117; border: 1px dashed #374151; border-radius: 10px; padding: 14px; margin-top: 12px;">
-                            <div style="color: #f59e0b; font-size: 0.85rem; font-weight: 600; margin-bottom: 8px;">🎯 내 확률로 Edge 계산</div>
+                        <div style="background: #0f1419; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                            <div style="color: #6b7280; font-size: 0.8rem; font-weight: 600; margin-bottom: 8px;">🎯 내 확률로 Edge 계산</div>
                         </div>
                     ''', unsafe_allow_html=True)
 
@@ -446,23 +570,15 @@ def render_day_summary(total: int, correct: int, mae: Optional[float] = None) ->
     mae_html = ""
     if mae is not None:
         mae_color = SUCCESS_COLOR if mae <= 10 else (LIVE_COLOR if mae <= 13 else FAIL_COLOR)
-        mae_html = f'''
-            <div style="display: inline-block; background: #1e293b; border-radius: 8px; padding: 8px 16px; margin-left: 16px;">
-                <div style="font-size: 0.7rem; color: #64748b;">평균 오차</div>
-                <div style="font-size: 1.2rem; font-weight: 700; color: {mae_color};">{mae:.1f}pt</div>
-            </div>
-        '''
+        mae_html = f'<div style="display: inline-block; background: #1e293b; border-radius: 8px; padding: 8px 16px; margin-left: 16px;"><div style="font-size: 0.7rem; color: #64748b;">평균 오차</div><div style="font-size: 1.2rem; font-weight: 700; color: {mae_color};">{mae:.1f}pt</div></div>'
 
-    st.markdown(f'''
-        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #0f2744 100%); border: 1px solid #2d4a6f; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center;">
-            <div style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 8px;">오늘의 예측 성과</div>
-            <div style="display: flex; justify-content: center; align-items: center;">
-                <div style="display: inline-block; background: #1e293b; border-radius: 8px; padding: 8px 16px;">
-                    <div style="font-size: 0.7rem; color: #64748b;">적중률</div>
-                    <div style="font-size: 1.8rem; font-weight: 800; color: {acc_color};">{accuracy:.1f}%</div>
-                </div>
-                {mae_html}
-            </div>
-            <div style="font-size: 0.85rem; color: #64748b; margin-top: 12px;">{total}경기 중 {correct}경기 적중</div>
-        </div>
-    ''', unsafe_allow_html=True)
+    html = f'''<div style="background: linear-gradient(135deg, #1e3a5f 0%, #0f2744 100%); border: 1px solid #2d4a6f; border-radius: 12px; padding: 20px; margin: 20px 0; text-align: center;">
+<div style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 8px;">오늘의 예측 성과</div>
+<div style="display: flex; justify-content: center; align-items: center;">
+<div style="display: inline-block; background: #1e293b; border-radius: 8px; padding: 8px 16px;">
+<div style="font-size: 0.7rem; color: #64748b;">적중률</div>
+<div style="font-size: 1.8rem; font-weight: 800; color: {acc_color};">{accuracy:.1f}%</div>
+</div>{mae_html}</div>
+<div style="font-size: 0.85rem; color: #64748b; margin-top: 12px;">{total}경기 중 {correct}경기 적중</div>
+</div>'''
+    st.markdown(html, unsafe_allow_html=True)

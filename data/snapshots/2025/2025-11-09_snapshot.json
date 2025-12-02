@@ -1,0 +1,133 @@
+{
+  "meta": {
+    "version": "1.0",
+    "model": "V4.4 (Logistic + Player EPM + B2B)",
+    "created_at": "2025-11-30T14:01:21.237293+00:00",
+    "game_date_et": "2025-11-09",
+    "game_date_kst": "2025-11-10"
+  },
+  "summary": {
+    "total_games": 7,
+    "finished_games": 7,
+    "correct_predictions": 6,
+    "accuracy_pct": 85.7
+  },
+  "predictions": [
+    {
+      "game_id": "0022500191",
+      "game_time": "3:30 pm ET",
+      "home_team": "MIL",
+      "away_team": "HOU",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 29.7,
+      "predicted_margin": -6.4,
+      "predicted_winner": "HOU",
+      "game_status": 3,
+      "home_score": 115,
+      "away_score": 122,
+      "actual_winner": "HOU",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500192",
+      "game_time": "6:00 pm ET",
+      "home_team": "NYK",
+      "away_team": "BKN",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 86.3,
+      "predicted_margin": 11.2,
+      "predicted_winner": "NYK",
+      "game_status": 3,
+      "home_score": 134,
+      "away_score": 98,
+      "actual_winner": "NYK",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500193",
+      "game_time": "6:00 pm ET",
+      "home_team": "ORL",
+      "away_team": "BOS",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 65.3,
+      "predicted_margin": 4.7,
+      "predicted_winner": "ORL",
+      "game_status": 3,
+      "home_score": 107,
+      "away_score": 111,
+      "actual_winner": "BOS",
+      "is_correct": false
+    },
+    {
+      "game_id": "0022500194",
+      "game_time": "6:00 pm ET",
+      "home_team": "MEM",
+      "away_team": "OKC",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 12.8,
+      "predicted_margin": -11.6,
+      "predicted_winner": "OKC",
+      "game_status": 3,
+      "home_score": 100,
+      "away_score": 114,
+      "actual_winner": "OKC",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500195",
+      "game_time": "7:30 pm ET",
+      "home_team": "PHI",
+      "away_team": "DET",
+      "home_b2b": true,
+      "away_b2b": false,
+      "home_win_prob": 29.7,
+      "predicted_margin": -6.4,
+      "predicted_winner": "DET",
+      "game_status": 3,
+      "home_score": 108,
+      "away_score": 111,
+      "actual_winner": "DET",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500196",
+      "game_time": "8:30 pm ET",
+      "home_team": "GSW",
+      "away_team": "IND",
+      "home_b2b": false,
+      "away_b2b": true,
+      "home_win_prob": 88.4,
+      "predicted_margin": 12.2,
+      "predicted_winner": "GSW",
+      "game_status": 3,
+      "home_score": 114,
+      "away_score": 83,
+      "actual_winner": "GSW",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500197",
+      "game_time": "9:00 pm ET",
+      "home_team": "SAC",
+      "away_team": "MIN",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 25.6,
+      "predicted_margin": -7.9,
+      "predicted_winner": "MIN",
+      "game_status": 3,
+      "home_score": 117,
+      "away_score": 144,
+      "actual_winner": "MIN",
+      "is_correct": true
+    }
+  ],
+  "integrity": {
+    "hash_algorithm": "SHA256",
+    "predictions_hash": "8dbf9b936348a6702650333c9732194ddc1da91d5ed6c45824a0308588482afd"
+  }
+}

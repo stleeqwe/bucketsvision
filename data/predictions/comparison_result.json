@@ -1,0 +1,17 @@
+{
+  "season": "25-26",
+  "total_games": 280,
+  "bucketsvision": {
+    "correct": 207,
+    "accuracy": 0.7393,
+    "mae": Infinity
+  },
+  "dnt": {
+    "correct": 193,
+    "accuracy": 0.6893,
+    "mae": 10.37
+  },
+  "different_predictions": 32,
+  "diff_bv_wins": 23,
+  "diff_dnt_wins": 9
+}

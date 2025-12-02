@@ -1,0 +1,117 @@
+{
+  "meta": {
+    "version": "1.0",
+    "model": "V4.4 (Logistic + Player EPM + B2B)",
+    "created_at": "2025-11-30T14:01:41.976463+00:00",
+    "game_date_et": "2025-11-18",
+    "game_date_kst": "2025-11-19"
+  },
+  "summary": {
+    "total_games": 6,
+    "finished_games": 6,
+    "correct_predictions": 5,
+    "accuracy_pct": 83.3
+  },
+  "predictions": [
+    {
+      "game_id": "0022500249",
+      "game_time": "7:00 pm ET",
+      "home_team": "ORL",
+      "away_team": "GSW",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 69.1,
+      "predicted_margin": 6.0,
+      "predicted_winner": "ORL",
+      "game_status": 3,
+      "home_score": 121,
+      "away_score": 113,
+      "actual_winner": "ORL",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500250",
+      "game_time": "7:30 pm ET",
+      "home_team": "BKN",
+      "away_team": "BOS",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 22.2,
+      "predicted_margin": -7.8,
+      "predicted_winner": "BOS",
+      "game_status": 3,
+      "home_score": 99,
+      "away_score": 113,
+      "actual_winner": "BOS",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500251",
+      "game_time": "8:00 pm ET",
+      "home_team": "ATL",
+      "away_team": "DET",
+      "home_b2b": false,
+      "away_b2b": true,
+      "home_win_prob": 65.9,
+      "predicted_margin": 4.9,
+      "predicted_winner": "ATL",
+      "game_status": 3,
+      "home_score": 112,
+      "away_score": 120,
+      "actual_winner": "DET",
+      "is_correct": false
+    },
+    {
+      "game_id": "0022500252",
+      "game_time": "8:00 pm ET",
+      "home_team": "SAS",
+      "away_team": "MEM",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 70.2,
+      "predicted_margin": 6.4,
+      "predicted_winner": "SAS",
+      "game_status": 3,
+      "home_score": 111,
+      "away_score": 101,
+      "actual_winner": "SAS",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500253",
+      "game_time": "10:30 pm ET",
+      "home_team": "LAL",
+      "away_team": "UTA",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 82.3,
+      "predicted_margin": 9.5,
+      "predicted_winner": "LAL",
+      "game_status": 3,
+      "home_score": 140,
+      "away_score": 126,
+      "actual_winner": "LAL",
+      "is_correct": true
+    },
+    {
+      "game_id": "0022500254",
+      "game_time": "11:00 pm ET",
+      "home_team": "POR",
+      "away_team": "PHX",
+      "home_b2b": false,
+      "away_b2b": false,
+      "home_win_prob": 35.9,
+      "predicted_margin": -4.3,
+      "predicted_winner": "PHX",
+      "game_status": 3,
+      "home_score": 110,
+      "away_score": 127,
+      "actual_winner": "PHX",
+      "is_correct": true
+    }
+  ],
+  "integrity": {
+    "hash_algorithm": "SHA256",
+    "predictions_hash": "6f30d1e8b88d78c0bd0874ec9d2b8c9d6872db59cdba9812a405a9ab27a13386"
+  }
+}

@@ -24,6 +24,11 @@ from src.data_collection.nba_stats_client import NBAStatsClient
 from src.data_collection.espn_injury_client import ESPNInjuryClient, ESPNInjury
 from src.data_collection.odds_api_client import OddsAPIClient, GameOdds
 from src.features.injury_impact import InjuryImpactCalculator, load_player_epm
+from src.features.advanced_injury_impact import (
+    AdvancedInjuryImpactCalculator,
+    PlayerImpactResult,
+    create_advanced_injury_calculator
+)
 from src.utils.logger import logger
 from src.utils.memory import optimize_dataframe
 from config.constants import TEAM_INFO, ABBR_TO_ID
@@ -46,7 +51,9 @@ class DataLoader:
         # 캐시
         self._team_epm_date_cache: Dict[str, Dict[int, Dict]] = {}
         self._injury_calc: Optional[InjuryImpactCalculator] = None
+        self._advanced_injury_calc: Optional[AdvancedInjuryImpactCalculator] = None
         self._team_game_logs_cache: Optional[pd.DataFrame] = None
+        self._player_game_logs_cache: Optional[pd.DataFrame] = None  # 선수 경기 로그
         self._team_stats_cache: Dict[int, Dict] = {}  # V4 피처용 팀 통계
         self._player_epm_cache: Dict[int, pd.DataFrame] = {}  # V4.3: 시즌별 선수 EPM
         self._odds_cache: Optional[Dict[Tuple[str, str], GameOdds]] = None  # 배당 캐시
@@ -142,6 +149,7 @@ class DataLoader:
                     "team_epm_z": team_data.get("team_epm_z", 0),
                     "team_oepm_z": team_data.get("team_oepm_z", 0),
                     "team_depm_z": team_data.get("team_depm_z", 0),
+                    "team_alias": team_data.get("team_alias", ""),  # 팀 약어 추가
                 }
 
             # 날짜별 캐시에 저장
@@ -195,7 +203,6 @@ class DataLoader:
             "team_epm_z_diff": safe_diff(home.get("team_epm_z"), away.get("team_epm_z"), 0),
             "team_oepm_z_diff": safe_diff(home.get("team_oepm_z"), away.get("team_oepm_z"), 0),
             "team_depm_z_diff": safe_diff(home.get("team_depm_z"), away.get("team_depm_z"), 0),
-            "home_advantage": 3.0,
         }
 
     def get_injuries(self, team_abbr: str) -> List[ESPNInjury]:
@@ -909,10 +916,393 @@ class DataLoader:
 
         return features
 
+    # =========================================================================
+    # V5.2 피처 빌딩 메서드
+    # =========================================================================
+
+    def _calc_top5_epm(self, team_id: int, season: int) -> float:
+        """
+        상위 5명 선수(MPG 기준)의 평균 EPM.
+        """
+        players = self._get_team_players(team_id, season)
+        if len(players) < 5:
+            return 0.0
+        return players.nlargest(5, 'mpg')['tot'].mean()
+
+    def _calc_orb_pct(self, games: pd.DataFrame) -> float:
+        """
+        공격 리바운드 비율: ORB / (ORB + DRB)
+        """
+        if len(games) == 0:
+            return 0.25
+        orb = games['orb'].sum() if 'orb' in games.columns else 0
+        drb = games['drb'].sum() if 'drb' in games.columns else 0
+        total = orb + drb
+        if total == 0:
+            return 0.25
+        return orb / total
+
+    def _calc_last3_win_pct(self, games: pd.DataFrame) -> float:
+        """최근 3경기 승률"""
+        if len(games) == 0:
+            return 0.5
+        last3 = games.head(3)
+        return (last3['result'] == 'W').mean()
+
+    def _calc_rest_days(
+        self,
+        team_id: int,
+        target_date: date,
+        logs: pd.DataFrame
+    ) -> int:
+        """
+        전 경기로부터의 휴식일 수 계산.
+
+        Args:
+            team_id: 팀 ID
+            target_date: 기준 날짜
+            logs: 팀 게임 로그
+
+        Returns:
+            휴식일 수 (0=B2B, 1=1일 휴식, ..., 최대 7)
+        """
+        team_logs = logs[logs['team_id'] == team_id].copy()
+        if len(team_logs) == 0:
+            return 7  # 데이터 없으면 충분히 쉰 것으로
+
+        team_logs['game_date'] = pd.to_datetime(team_logs['game_date'])
+        target_dt = pd.to_datetime(target_date)
+
+        # target_date 이전 경기만
+        prev_games = team_logs[team_logs['game_date'] < target_dt]
+        if len(prev_games) == 0:
+            return 7  # 시즌 첫 경기
+
+        last_game_date = prev_games['game_date'].max()
+        rest_days = (target_dt - last_game_date).days - 1  # 경기일 제외
+
+        # 클리핑 (0~7)
+        return min(max(rest_days, 0), 7)
+
+    def build_v5_2_features(
+        self,
+        home_team_id: int,
+        away_team_id: int,
+        team_epm: Dict[int, Dict],
+        target_date: date,
+        home_b2b: bool = False,
+        away_b2b: bool = False
+    ) -> Dict[str, float]:
+        """
+        V5.2 피처 생성 (11개).
+
+        Args:
+            home_team_id: 홈팀 ID
+            away_team_id: 원정팀 ID
+            team_epm: 팀 EPM 데이터 (DNT API)
+            target_date: 기준 날짜
+            home_b2b: 홈팀 B2B 여부
+            away_b2b: 어웨이팀 B2B 여부
+
+        Returns:
+            V5.2 피처 딕셔너리 (11개)
+        """
+        from src.utils.helpers import get_season_from_date
+        season = get_season_from_date(target_date)
+
+        # 팀 게임 로그 로드
+        logs = self.load_team_game_logs(target_date)
+
+        # EPM 데이터
+        home_epm_data = team_epm.get(home_team_id, {})
+        away_epm_data = team_epm.get(away_team_id, {})
+
+        def safe_get(d, key, default=0):
+            val = d.get(key)
+            return val if val is not None else default
+
+        # 팀별 최근 경기 통계
+        home_logs = logs[logs['team_id'] == home_team_id].copy() if not logs.empty else pd.DataFrame()
+        away_logs = logs[logs['team_id'] == away_team_id].copy() if not logs.empty else pd.DataFrame()
+
+        if not home_logs.empty:
+            home_logs['game_date'] = pd.to_datetime(home_logs['game_date'])
+            home_logs = home_logs[home_logs['game_date'] < pd.to_datetime(target_date)]
+            home_logs = home_logs.sort_values('game_date', ascending=False)
+
+        if not away_logs.empty:
+            away_logs['game_date'] = pd.to_datetime(away_logs['game_date'])
+            away_logs = away_logs[away_logs['game_date'] < pd.to_datetime(target_date)]
+            away_logs = away_logs.sort_values('game_date', ascending=False)
+
+        # 최근 10경기
+        home_recent = home_logs.head(10) if not home_logs.empty else pd.DataFrame()
+        away_recent = away_logs.head(10) if not away_logs.empty else pd.DataFrame()
+
+        # 휴식일 계산
+        home_rest = self._calc_rest_days(home_team_id, target_date, logs)
+        away_rest = self._calc_rest_days(away_team_id, target_date, logs)
+
+        # V5.2 11개 피처
+        features = {
+            # EPM 핵심 (4개)
+            'team_epm_diff': safe_get(home_epm_data, 'team_epm') - safe_get(away_epm_data, 'team_epm'),
+            'player_rotation_epm_diff': self._calc_rotation_epm(home_team_id, season) - self._calc_rotation_epm(away_team_id, season),
+            'bench_strength_diff': self._calc_bench_strength(home_team_id, season) - self._calc_bench_strength(away_team_id, season),
+            'top5_epm_diff': self._calc_top5_epm(home_team_id, season) - self._calc_top5_epm(away_team_id, season),
+
+            # Four Factors (3개)
+            'ft_rate_diff': self._calc_ft_rate(home_recent) - self._calc_ft_rate(away_recent),
+            'orb_pct_diff': self._calc_orb_pct(home_recent) - self._calc_orb_pct(away_recent),
+            'efg_pct_diff': self._calc_efg(home_recent) - self._calc_efg(away_recent),
+
+            # 모멘텀 (2개)
+            'last3_win_pct_diff': self._calc_last3_win_pct(home_logs) - self._calc_last3_win_pct(away_logs),
+            'last5_win_pct_diff': (
+                ((home_logs.head(5)['result'] == 'W').mean() if len(home_logs) > 0 else 0.5) -
+                ((away_logs.head(5)['result'] == 'W').mean() if len(away_logs) > 0 else 0.5)
+            ),
+
+            # 피로도 (2개) - V5.2 신규
+            'b2b_diff': (1 if home_b2b else 0) - (1 if away_b2b else 0),
+            'rest_days_diff': home_rest - away_rest,
+        }
+
+        return features
+
     def clear_cache(self) -> None:
         """캐시 초기화"""
         self._team_epm_date_cache = {}
         self._team_game_logs_cache = None
+        self._player_game_logs_cache = None
         self._team_stats_cache = {}
         self._player_epm_cache = {}
+        self._advanced_injury_calc = None
         self.espn_client.clear_cache()
+
+    # =========================================================================
+    # V4.4 고급 부상 영향력 계산
+    # =========================================================================
+
+    def load_player_game_logs(self, target_date: date) -> pd.DataFrame:
+        """
+        선수 경기 로그 로드.
+
+        Args:
+            target_date: 기준 날짜
+
+        Returns:
+            선수 경기 로그 DataFrame
+        """
+        if self._player_game_logs_cache is not None:
+            return self._player_game_logs_cache
+
+        try:
+            from src.utils.helpers import get_season_from_date
+            season = get_season_from_date(target_date)
+            logs = self.nba_client.get_player_game_logs(season=season)
+
+            if not logs.empty:
+                logger.info(f"Loaded {len(logs)} player game logs for season {season}")
+                self._player_game_logs_cache = logs
+
+            return logs if not logs.empty else pd.DataFrame()
+
+        except Exception as e:
+            logger.error(f"Error loading player game logs: {e}")
+            return pd.DataFrame()
+
+    def get_advanced_injury_calculator(
+        self,
+        target_date: date,
+        team_epm: Dict[int, Dict]
+    ) -> Optional[AdvancedInjuryImpactCalculator]:
+        """
+        고급 부상 영향력 계산기 반환.
+
+        Args:
+            target_date: 기준 날짜
+            team_epm: 팀 EPM 딕셔너리
+
+        Returns:
+            AdvancedInjuryImpactCalculator 또는 None
+        """
+        if self._advanced_injury_calc is not None:
+            return self._advanced_injury_calc
+
+        try:
+            from src.utils.helpers import get_season_from_date
+            season = get_season_from_date(target_date)
+
+            # 팀 및 선수 경기 로그 로드
+            team_logs = self.load_team_game_logs(target_date)
+            player_logs = self.load_player_game_logs(target_date)
+
+            if team_logs.empty or player_logs.empty:
+                logger.warning("경기 로그 데이터 부족으로 고급 부상 계산기 생성 실패")
+                return None
+
+            self._advanced_injury_calc = create_advanced_injury_calculator(
+                data_dir=self.data_dir,
+                team_game_logs=team_logs,
+                player_game_logs=player_logs,
+                team_epm=team_epm,
+                season=season
+            )
+            return self._advanced_injury_calc
+
+        except Exception as e:
+            logger.error(f"Error creating advanced injury calculator: {e}")
+            return None
+
+    def calculate_advanced_injury_impact(
+        self,
+        home_abbr: str,
+        away_abbr: str,
+        target_date: date,
+        team_epm: Dict[int, Dict],
+        gtd_included: Optional[Dict[str, bool]] = None
+    ) -> Tuple[float, float, List[PlayerImpactResult]]:
+        """
+        경기별 고급 부상 영향력 계산.
+
+        Args:
+            home_abbr: 홈팀 약어
+            away_abbr: 원정팀 약어
+            target_date: 기준 날짜
+            team_epm: 팀 EPM 딕셔너리
+            gtd_included: GTD 선수 포함 여부 딕셔너리
+
+        Returns:
+            (home_impact, away_impact, player_details)
+            양수 = 해당 팀에 불리
+        """
+        calc = self.get_advanced_injury_calculator(target_date, team_epm)
+        if calc is None:
+            return 0.0, 0.0, []
+
+        # Out 선수 조회
+        home_out = self.get_injuries(home_abbr)
+        away_out = self.get_injuries(away_abbr)
+
+        # GTD 선수 조회
+        home_gtd = self.get_gtd_players(home_abbr)
+        away_gtd = self.get_gtd_players(away_abbr)
+
+        home_out_names = [inj.player_name for inj in home_out]
+        away_out_names = [inj.player_name for inj in away_out]
+        home_gtd_names = [inj.player_name for inj in home_gtd]
+        away_gtd_names = [inj.player_name for inj in away_gtd]
+
+        return calc.get_game_injury_impact(
+            home_team=home_abbr,
+            away_team=away_abbr,
+            home_out_players=home_out_names,
+            away_out_players=away_out_names,
+            home_gtd_players=home_gtd_names,
+            away_gtd_players=away_gtd_names,
+        )
+
+    def get_injury_summary(
+        self,
+        team_abbr: str,
+        target_date: date,
+        team_epm: Dict[int, Dict]
+    ) -> Dict:
+        """
+        팀 부상자 요약 정보 반환.
+
+        Args:
+            team_abbr: 팀 약어
+            target_date: 기준 날짜
+            team_epm: 팀 EPM 딕셔너리
+
+        Returns:
+            {
+                "out_players": [...],
+                "gtd_players": [...],
+                "total_impact": float
+            }
+        """
+        calc = self.get_advanced_injury_calculator(target_date, team_epm)
+
+        out_injuries = self.get_injuries(team_abbr)
+        gtd_injuries = self.get_gtd_players(team_abbr)
+
+        out_details = []
+        gtd_details = []
+        total_impact = 0.0
+
+        for inj in out_injuries:
+            if calc:
+                result = calc.calculate_player_impact(inj.player_name, team_abbr)
+                if result.is_valid:
+                    # prob_shift는 이미 0 이상 값만 반환 (음수는 0 처리됨)
+                    total_impact += result.prob_shift
+                    out_details.append({
+                        "name": inj.player_name,
+                        "status": "Out",
+                        "detail": inj.detail,
+                        "epm": round(result.epm, 2),
+                        "mpg": round(result.mpg, 1),
+                        "prob_shift": round(result.prob_shift * 100, 1),  # %로 변환
+                        "played_games": result.played_games,
+                        "missed_games": result.missed_games,
+                        "schedule_diff": round(result.schedule_diff, 3),  # 성과 차이
+                    })
+                else:
+                    out_details.append({
+                        "name": inj.player_name,
+                        "status": "Out",
+                        "detail": inj.detail,
+                        "prob_shift": 0.0,
+                        "skip_reason": result.skip_reason,
+                    })
+            else:
+                out_details.append({
+                    "name": inj.player_name,
+                    "status": "Out",
+                    "detail": inj.detail,
+                    "prob_shift": 0.0,
+                })
+
+        for inj in gtd_injuries:
+            if calc:
+                result = calc.calculate_player_impact(inj.player_name, team_abbr)
+                if result.is_valid:
+                    # GTD는 50%만 반영 (출전 불확실)
+                    gtd_impact = result.prob_shift * 0.5
+                    total_impact += gtd_impact
+                    gtd_details.append({
+                        "name": inj.player_name,
+                        "status": "GTD",
+                        "detail": inj.detail,
+                        "epm": round(result.epm, 2),
+                        "mpg": round(result.mpg, 1),
+                        "prob_shift": round(result.prob_shift * 100, 1),  # 원래 영향력 (%)
+                        "applied_shift": round(gtd_impact * 100, 1),  # 실제 반영된 영향력 (50%)
+                        "played_games": result.played_games,
+                        "missed_games": result.missed_games,
+                        "schedule_diff": round(result.schedule_diff, 3),  # 성과 차이
+                    })
+                else:
+                    gtd_details.append({
+                        "name": inj.player_name,
+                        "status": "GTD",
+                        "detail": inj.detail,
+                        "prob_shift": 0.0,
+                        "skip_reason": result.skip_reason,
+                    })
+            else:
+                gtd_details.append({
+                    "name": inj.player_name,
+                    "status": "GTD",
+                    "detail": inj.detail,
+                    "prob_shift": 0.0,
+                })
+
+        return {
+            "out_players": out_details,
+            "gtd_players": gtd_details,
+            "total_prob_shift": round(total_impact * 100, 1),  # %로 변환 (승률 감소)
+        }
