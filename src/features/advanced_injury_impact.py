@@ -1,7 +1,9 @@
 """
-Advanced Injury Impact Calculator V4.
+Advanced Injury Impact Calculator.
 
 기대 대비 성과(Performance) 기반 선수 영향력 계산.
+
+버전: 1.0.0
 
 핵심 공식:
 1. 기대 승률 = 0.5 - (상대팀 EPM × 0.03)
@@ -17,6 +19,10 @@ Advanced Injury Impact Calculator V4.
 3. 선수 영향력 = 출전경기 평균 성과 - 미출전경기 평균 성과
    - 양수: 선수가 있을 때 팀이 기대 이상 성과 → 영향력 인정
    - 음수: 선수가 없어도 팀 성과 비슷/더 좋음 → 영향력 없음
+
+4. prob_shift = player_epm × 0.02 × normalized_diff
+   - 결장 데이터 없으면 폴백: prob_shift = player_epm × 0.02
+   - 한도 없음 (확률 경계 1%~99%만 유지)
 """
 
 from dataclasses import dataclass
@@ -56,16 +62,20 @@ class PlayerImpactResult:
 
 class AdvancedInjuryImpactCalculator:
     """
-    고급 부상 영향력 계산기 V4.
+    고급 부상 영향력 계산기.
 
     기대 대비 성과(Performance) 기반 선수 영향력 계산.
     """
+
+    # 버전 정보
+    VERSION = "1.0.0"
+    VERSION_DATE = "2025-12-03"
 
     # 적용 조건
     MIN_EPM = 0.0  # EPM > 0
     MIN_MPG = 12.0  # 로테이션 선수
     MIN_PLAY_RATE = 1/3  # 출전율 > 1/3
-    MIN_MISSED_GAMES = 2  # 미출전 최소 2경기
+    MIN_MISSED_GAMES = 2  # 미출전 최소 2경기 (폴백 로직 있음)
 
     # EPM → 기대 승률 변환 계수
     EPM_TO_WIN_PROB = 0.03  # EPM 1점 ≈ 3% 승률 변화
@@ -73,8 +83,31 @@ class AdvancedInjuryImpactCalculator:
     # 선수 EPM → 승률 변환 계수
     PLAYER_EPM_TO_PROB = 0.02  # 선수 EPM 1점 ≈ 2%p
 
-    # 최대 승률 변화 제한
-    MAX_PROB_SHIFT = 0.15  # 최대 15%p
+    # 한도 없음 (확률 경계 1%~99%만 유지)
+
+    @classmethod
+    def get_version_info(cls) -> Dict:
+        """버전 정보 반환"""
+        return {
+            "version": cls.VERSION,
+            "version_date": cls.VERSION_DATE,
+            "algorithm": "Performance-based (출전 vs 미출전 성과 비교)",
+            "conditions": {
+                "min_epm": cls.MIN_EPM,
+                "min_mpg": cls.MIN_MPG,
+                "min_play_rate": cls.MIN_PLAY_RATE,
+                "min_missed_games": cls.MIN_MISSED_GAMES,
+            },
+            "coefficients": {
+                "epm_to_win_prob": cls.EPM_TO_WIN_PROB,
+                "player_epm_to_prob": cls.PLAYER_EPM_TO_PROB,
+            },
+            "features": [
+                "결장 데이터 없으면 EPM 기반 폴백",
+                "이적 선수 현재 팀 기준 처리",
+                "한도 없음 (확률 경계만 유지)",
+            ],
+        }
 
     def __init__(
         self,
@@ -88,14 +121,15 @@ class AdvancedInjuryImpactCalculator:
         self.player_game_logs = player_game_logs.copy()
         self.team_epm = team_epm
 
-        # 팀 약어 → EPM 매핑
-        # team_epm dict에서 team_alias 컬럼을 직접 사용
+        # 팀 약어 → EPM 매핑 및 팀 약어 → 팀 ID 매핑
         self.team_alias_to_epm = {}
+        self.team_alias_to_id = {}
         for tid, info in team_epm.items():
             team_alias = info.get('team_alias', '')
             team_epm_value = info.get('team_epm', 0)
             if team_alias:
                 self.team_alias_to_epm[team_alias] = team_epm_value
+                self.team_alias_to_id[team_alias] = tid
 
         logger.info(f"Team EPM mapping: {len(self.team_alias_to_epm)} teams")
 
@@ -400,16 +434,23 @@ class AdvancedInjuryImpactCalculator:
                 f"(검색 팀: {team_abbr}, 실제 팀: {actual_team})"
             )
 
-        # 팀이 다르면 경고 (이적 선수)
+        # 팀이 다르면 현재 팀(team_abbr) 기준으로 처리 (이적 선수)
         if actual_team != team_abbr:
-            logger.warning(
-                f"⚠️ 이적 선수 감지: {matched_name}은 {team_abbr}가 아닌 {actual_team} 소속"
+            logger.info(
+                f"이적 선수 처리: {matched_name} (DNT: {actual_team} → ESPN: {team_abbr})"
             )
+            # 현재 팀의 team_id 사용
+            current_team_id = self.team_alias_to_id.get(team_abbr)
+            if current_team_id is None:
+                return invalid_result(f"현재 팀 {team_abbr} ID를 찾을 수 없음")
+            team_id = current_team_id
+            actual_team = team_abbr  # 현재 팀으로 업데이트
+        else:
+            team_id = player.get('team_id')
 
         player_epm = player.get('tot', 0.0)
         player_mpg = player.get('mpg', 0.0)
         player_id = player.get('player_id')
-        team_id = player.get('team_id')
 
         if pd.isna(player_epm) or pd.isna(player_mpg):
             return invalid_result("EPM/MPG 데이터 없음")
@@ -443,9 +484,24 @@ class AdvancedInjuryImpactCalculator:
         missed_game_ids = all_game_ids - player_game_ids
         missed_count = len(missed_game_ids)
 
-        # 조건 4: 미출전 >= 2경기
+        # 조건 4: 미출전 >= 2경기 → 폴백 로직 적용
         if missed_count < self.MIN_MISSED_GAMES:
-            return invalid_result(f"미출전 경기 부족 ({missed_count}경기)")
+            # 폴백: 미출전 데이터 없으면 EPM 기반 기본 계산
+            prob_shift = player_epm * self.PLAYER_EPM_TO_PROB
+            return PlayerImpactResult(
+                player_name=matched_name,
+                team_abbr=actual_team,
+                epm=player_epm,
+                mpg=player_mpg,
+                played_games=played_count,
+                played_avg_value=0.0,
+                missed_games=missed_count,
+                missed_avg_value=0.0,
+                schedule_diff=0.0,
+                prob_shift=prob_shift,
+                is_valid=True,
+                skip_reason=None
+            )
 
         # 출전 경기 성과 수집
         played_performances = []
@@ -474,7 +530,7 @@ class AdvancedInjuryImpactCalculator:
             # 성과 차이가 클수록 더 큰 영향력 (정규화: 0.5가 최대)
             normalized_diff = min(schedule_diff / 0.5, 1.0)  # 최대 1.0으로 제한
             prob_shift = player_epm * self.PLAYER_EPM_TO_PROB * normalized_diff
-            prob_shift = min(prob_shift, self.MAX_PROB_SHIFT)  # 최대 15%p 제한
+            # 한도 제거 - 계산된 그대로 적용
         else:
             prob_shift = 0.0
 
@@ -538,21 +594,29 @@ class AdvancedInjuryImpactCalculator:
 
 
 def create_advanced_injury_calculator(
-    data_dir: Path,
+    player_epm_df: pd.DataFrame,
     team_game_logs: pd.DataFrame,
     player_game_logs: pd.DataFrame,
     team_epm: Dict[int, Dict],
-    season: int = 2026,
 ) -> Optional[AdvancedInjuryImpactCalculator]:
-    """팩토리 함수."""
+    """
+    팩토리 함수.
+
+    Args:
+        player_epm_df: 선수 EPM DataFrame (DNT API에서 로드)
+        team_game_logs: 팀 경기 로그
+        player_game_logs: 선수 경기 로그
+        team_epm: 팀 EPM 딕셔너리
+
+    Returns:
+        AdvancedInjuryImpactCalculator 또는 None
+    """
     try:
-        epm_path = data_dir / "raw" / "dnt" / "season_epm" / f"season_{season}.parquet"
-        if not epm_path.exists():
-            logger.warning(f"Player EPM file not found: {epm_path}")
+        if player_epm_df is None or player_epm_df.empty:
+            logger.warning("Player EPM data is empty")
             return None
 
-        player_epm_df = pd.read_parquet(epm_path)
-        logger.info(f"Loaded player EPM for advanced injury calc: {len(player_epm_df)} players")
+        logger.info(f"Creating advanced injury calculator with {len(player_epm_df)} players")
 
         return AdvancedInjuryImpactCalculator(
             player_epm_df=player_epm_df,

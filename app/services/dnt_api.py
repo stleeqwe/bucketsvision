@@ -100,6 +100,28 @@ class DNTApiClient:
 
         return self._request("epm", params)
 
+    def get_season_epm(
+        self,
+        season: int = 2026,
+        seasontype: int = 2
+    ) -> List[Dict]:
+        """
+        시즌 전체 선수 EPM 조회.
+
+        Args:
+            season: 시즌 연도 (예: 2026)
+            seasontype: 시즌 타입 (2: 정규시즌, 4: 플레이오프)
+
+        Returns:
+            시즌 전체 선수 EPM 리스트
+        """
+        params = {
+            "season": season,
+            "seasontype": seasontype
+        }
+
+        return self._request("season-epm", params)
+
     def get_game_predictions(
         self,
         date: Optional[str] = None

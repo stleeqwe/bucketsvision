@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bucketsvision.pregame</string>
+
+    <key>Comment</key>
+    <string>BucketsVision Pre-game Prediction Snapshot (5 PM ET / 7 AM KST)</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>/Users/stlee/Desktop/bucketsvision/scripts/verified_tracking_runner.py</string>
+        <string>pregame</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/stlee/Desktop/bucketsvision</string>
+
+    <!-- 매일 오전 7시 KST (오후 5시 ET) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/stlee/Desktop/bucketsvision/logs/pregame.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/stlee/Desktop/bucketsvision/logs/pregame_error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+        <key>PYTHONPATH</key>
+        <string>/Users/stlee/Desktop/bucketsvision</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

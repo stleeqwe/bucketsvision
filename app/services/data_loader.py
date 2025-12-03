@@ -23,7 +23,7 @@ from app.services.dnt_api import DNTApiClient
 from src.data_collection.nba_stats_client import NBAStatsClient
 from src.data_collection.espn_injury_client import ESPNInjuryClient, ESPNInjury
 from src.data_collection.odds_api_client import OddsAPIClient, GameOdds
-from src.features.injury_impact import InjuryImpactCalculator, load_player_epm
+from src.features.injury_impact import InjuryImpactCalculator
 from src.features.advanced_injury_impact import (
     AdvancedInjuryImpactCalculator,
     PlayerImpactResult,
@@ -32,6 +32,10 @@ from src.features.advanced_injury_impact import (
 from src.utils.logger import logger
 from src.utils.memory import optimize_dataframe
 from config.constants import TEAM_INFO, ABBR_TO_ID
+
+# 리팩토링 Phase 2: Feature Builder
+from app.services.feature_builders import V54FeatureBuilder
+from app.services.feature_builders.base_builder import FeatureBuildContext
 
 
 class DataLoader:
@@ -214,10 +218,14 @@ class DataLoader:
         return self.espn_client.get_gtd_players(team_abbr)
 
     def get_injury_calculator(self) -> Optional[InjuryImpactCalculator]:
-        """부상 영향 계산기 반환"""
+        """부상 영향 계산기 반환 (DNT API 실시간 데이터 사용)"""
         if self._injury_calc is None:
             try:
-                player_epm = load_player_epm(self.data_dir, season=2026)
+                # DNT API에서 실시간 선수 EPM 로드
+                player_epm = self.load_player_epm(season=2026)
+                if player_epm.empty:
+                    logger.warning("Player EPM data is empty for injury calculator")
+                    return None
                 self._injury_calc = InjuryImpactCalculator(player_epm)
             except Exception as e:
                 logger.error(f"Error loading injury calculator: {e}")
@@ -814,28 +822,30 @@ class DataLoader:
 
     def load_player_epm(self, season: int) -> pd.DataFrame:
         """
-        시즌별 선수 EPM 데이터 로드.
+        시즌별 선수 EPM 데이터 로드 (DNT API 실시간 호출).
 
         Args:
             season: 시즌 연도 (예: 2026)
 
         Returns:
-            선수 EPM DataFrame
+            선수 EPM DataFrame (player_id, player_name, team_id, team_alias, tot, mpg 등)
         """
         if season in self._player_epm_cache:
             return self._player_epm_cache[season]
 
         try:
-            epm_path = self.data_dir / "raw" / "dnt" / "season_epm" / f"season_{season}.parquet"
-            if epm_path.exists():
-                df = pd.read_parquet(epm_path)
-                df = optimize_dataframe(df)  # 메모리 최적화
-                self._player_epm_cache[season] = df
-                logger.info(f"Loaded player EPM for season {season}: {len(df)} players")
-                return df
-            else:
-                logger.warning(f"Player EPM file not found: {epm_path}")
+            # DNT API 실시간 호출 - 시즌 전체 EPM 엔드포인트 사용
+            player_epm_raw = self.dnt_client.get_season_epm(season=season)
+
+            if not player_epm_raw:
+                logger.warning(f"No player EPM data from DNT API for season {season}")
                 return pd.DataFrame()
+
+            df = pd.DataFrame(player_epm_raw)
+            df = optimize_dataframe(df)  # 메모리 최적화
+            self._player_epm_cache[season] = df
+            logger.info(f"Loaded player EPM for season {season}: {len(df)} players")
+            return df
         except Exception as e:
             logger.error(f"Error loading player EPM for season {season}: {e}")
             return pd.DataFrame()
@@ -1070,6 +1080,105 @@ class DataLoader:
 
         return features
 
+    def build_v5_4_features(
+        self,
+        home_team_id: int,
+        away_team_id: int,
+        team_epm: Dict[int, Dict],
+        target_date: date
+    ) -> Dict[str, float]:
+        """
+        V5.4 피처 생성 (5개).
+
+        리팩토링 Phase 2: V54FeatureBuilder로 위임.
+
+        Args:
+            home_team_id: 홈팀 ID
+            away_team_id: 원정팀 ID
+            team_epm: 팀 EPM 데이터 (DNT API)
+            target_date: 기준 날짜
+
+        Returns:
+            V5.4 피처 딕셔너리 (5개)
+        """
+        from src.utils.helpers import get_season_from_date
+        season = get_season_from_date(target_date)
+
+        # 팀 게임 로그 로드
+        logs = self.load_team_game_logs(target_date)
+
+        # 선수 EPM 데이터 로드
+        player_epm = self.load_player_epm(season)
+
+        # 피처 빌드 컨텍스트 생성
+        context = FeatureBuildContext(
+            game_date=target_date,
+            home_team_id=home_team_id,
+            away_team_id=away_team_id,
+            team_logs=logs,
+            team_epm=team_epm,
+            player_epm=player_epm,
+        )
+
+        # V54FeatureBuilder로 피처 생성
+        builder = V54FeatureBuilder()
+        result = builder.build(context)
+
+        if result.is_valid:
+            return result.features
+        else:
+            # 에러 시 폴백: 기존 로직 사용
+            logger.warning(f"V54FeatureBuilder failed: {result.error_message}, using fallback")
+            return self._build_v5_4_features_fallback(
+                home_team_id, away_team_id, team_epm, target_date, season, logs
+            )
+
+    def _build_v5_4_features_fallback(
+        self,
+        home_team_id: int,
+        away_team_id: int,
+        team_epm: Dict[int, Dict],
+        target_date: date,
+        season: int,
+        logs: pd.DataFrame
+    ) -> Dict[str, float]:
+        """V5.4 피처 폴백 (기존 로직)"""
+        home_epm_data = team_epm.get(home_team_id, {})
+        away_epm_data = team_epm.get(away_team_id, {})
+
+        def safe_get(d, key, default=0):
+            val = d.get(key)
+            return val if val is not None else default
+
+        # 팀별 최근 경기 통계
+        home_logs = logs[logs['team_id'] == home_team_id].copy() if not logs.empty else pd.DataFrame()
+        away_logs = logs[logs['team_id'] == away_team_id].copy() if not logs.empty else pd.DataFrame()
+
+        if not home_logs.empty:
+            home_logs['game_date'] = pd.to_datetime(home_logs['game_date'])
+            home_logs = home_logs[home_logs['game_date'] < pd.to_datetime(target_date)]
+            home_logs = home_logs.sort_values('game_date', ascending=False)
+
+        if not away_logs.empty:
+            away_logs['game_date'] = pd.to_datetime(away_logs['game_date'])
+            away_logs = away_logs[away_logs['game_date'] < pd.to_datetime(target_date)]
+            away_logs = away_logs.sort_values('game_date', ascending=False)
+
+        # 최근 10경기
+        home_recent = home_logs.head(10) if not home_logs.empty else pd.DataFrame()
+        away_recent = away_logs.head(10) if not away_logs.empty else pd.DataFrame()
+
+        # V5.4 5개 피처
+        features = {
+            'team_epm_diff': safe_get(home_epm_data, 'team_epm') - safe_get(away_epm_data, 'team_epm'),
+            'sos_diff': safe_get(home_epm_data, 'sos') - safe_get(away_epm_data, 'sos'),
+            'bench_strength_diff': self._calc_bench_strength(home_team_id, season) - self._calc_bench_strength(away_team_id, season),
+            'top5_epm_diff': self._calc_top5_epm(home_team_id, season) - self._calc_top5_epm(away_team_id, season),
+            'ft_rate_diff': self._calc_ft_rate(home_recent) - self._calc_ft_rate(away_recent),
+        }
+
+        return features
+
     def clear_cache(self) -> None:
         """캐시 초기화"""
         self._team_epm_date_cache = {}
@@ -1142,12 +1251,17 @@ class DataLoader:
                 logger.warning("경기 로그 데이터 부족으로 고급 부상 계산기 생성 실패")
                 return None
 
+            # 선수 EPM 데이터 로드 (DNT API 실시간)
+            player_epm_df = self.load_player_epm(season)
+            if player_epm_df.empty:
+                logger.warning("선수 EPM 데이터 부족으로 고급 부상 계산기 생성 실패")
+                return None
+
             self._advanced_injury_calc = create_advanced_injury_calculator(
-                data_dir=self.data_dir,
+                player_epm_df=player_epm_df,
                 team_game_logs=team_logs,
                 player_game_logs=player_logs,
                 team_epm=team_epm,
-                season=season
             )
             return self._advanced_injury_calc
 

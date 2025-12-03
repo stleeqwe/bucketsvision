@@ -154,10 +154,10 @@ def get_data_loader():
 
 
 def get_prediction_service():
-    """V4.3 예측 서비스 로드"""
-    from app.services.predictor_v4 import V4PredictionService
+    """V5.2 예측 서비스 로드"""
+    from app.services.predictor_v5 import V5PredictionService
     model_dir = PROJECT_ROOT / "bucketsvision_v4" / "models"
-    return V4PredictionService(model_dir, version="4.3")
+    return V5PredictionService(model_dir)
 
 
 def get_predictions_for_date(target_date: date, use_closing_odds: bool = True) -> List[Dict]:
@@ -208,15 +208,35 @@ def get_predictions_for_date(target_date: date, use_closing_odds: bool = True) -
 
         # 예측 수행
         try:
-            # V4.3 피처 생성
-            features = loader.build_v4_3_features(home_id, away_id, team_epm, target_date)
+            # B2B 상태 확인
+            home_b2b = game.get('home_b2b', False)
+            away_b2b = game.get('away_b2b', False)
+
+            # V5.2 피처 생성
+            features = loader.build_v5_2_features(
+                home_id, away_id, team_epm, target_date,
+                home_b2b=home_b2b, away_b2b=away_b2b
+            )
 
             if not features:
                 logger.debug(f"{home_abbr} vs {away_abbr}: 피처 생성 실패")
                 continue
 
-            # V4.3 예측
-            home_prob = predictor.predict_proba(features)
+            # V5.2 기본 예측
+            base_prob = predictor.predict_proba(features)
+
+            # 부상 조정 적용
+            home_prob_shift = 0.0
+            away_prob_shift = 0.0
+            try:
+                home_injury = loader.get_injury_summary(home_abbr, target_date, team_epm)
+                away_injury = loader.get_injury_summary(away_abbr, target_date, team_epm)
+                home_prob_shift = home_injury.get('total_prob_shift', 0.0)
+                away_prob_shift = away_injury.get('total_prob_shift', 0.0)
+            except:
+                pass
+
+            home_prob = predictor.apply_injury_adjustment(base_prob, home_prob_shift, away_prob_shift)
 
             # 배당 정보 가져오기
             if use_closing_odds:

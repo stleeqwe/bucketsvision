@@ -19,21 +19,8 @@ from scipy.stats import norm
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.services.predictor_v4 import V4PredictionService
+from app.services.predictor_v5 import V5PredictionService
 from app.services.data_loader import DataLoader, TEAM_INFO
-
-# V4.4 B2B 보정 상수
-B2B_WEIGHT = 3.0
-
-
-def apply_b2b_correction(base_prob: float, home_b2b: bool, away_b2b: bool) -> float:
-    """B2B 보정 적용"""
-    b2b_simple = (1 if away_b2b else 0) - (1 if home_b2b else 0)
-    if b2b_simple == 0:
-        return base_prob
-    b2b_margin = b2b_simple * B2B_WEIGHT
-    prob_shift = norm.cdf(b2b_margin / 12.0) - 0.5
-    return min(max(base_prob + prob_shift, 0.01), 0.99)
 
 
 def get_et_today() -> date:
@@ -69,7 +56,7 @@ def create_daily_snapshot(target_date: Optional[date] = None) -> dict:
 
     # 서비스 로드
     model_dir = project_root / "bucketsvision_v4" / "models"
-    predictor = V4PredictionService(model_dir, version="4.3")
+    predictor = V5PredictionService(model_dir)
 
     data_dir = project_root / "data"
     loader = DataLoader(data_dir)
@@ -101,22 +88,34 @@ def create_daily_snapshot(target_date: Optional[date] = None) -> dict:
         home_abbr = home_info.get("abbr", "UNK")
         away_abbr = away_info.get("abbr", "UNK")
 
-        # 피처 생성 및 예측
-        features = loader.build_v4_3_features(home_id, away_id, team_epm, target_date)
-        base_prob = predictor.predict_proba(features)
-
-        # B2B 보정
+        # B2B 상태
         home_b2b = game.get("home_b2b", False)
         away_b2b = game.get("away_b2b", False)
-        home_win_prob = apply_b2b_correction(base_prob, home_b2b, away_b2b)
-        home_win_prob = min(max(home_win_prob, 0.01), 0.99)
 
-        # 마진 계산
+        # V5.2 피처 생성 및 예측
+        features = loader.build_v5_2_features(
+            home_id, away_id, team_epm, target_date,
+            home_b2b=home_b2b, away_b2b=away_b2b
+        )
+        base_prob = predictor.predict_proba(features)
+
+        # 부상 조정 적용
+        home_prob_shift = 0.0
+        away_prob_shift = 0.0
+        try:
+            home_injury = loader.get_injury_summary(home_abbr, target_date, team_epm)
+            away_injury = loader.get_injury_summary(away_abbr, target_date, team_epm)
+            home_prob_shift = home_injury.get('total_prob_shift', 0.0)
+            away_prob_shift = away_injury.get('total_prob_shift', 0.0)
+        except:
+            pass
+
+        home_win_prob = predictor.apply_injury_adjustment(base_prob, home_prob_shift, away_prob_shift)
+
+        # 마진 계산 (간단 변환)
+        from scipy.stats import norm
         raw_margin = norm.ppf(home_win_prob) * 12.0
-        if abs(home_win_prob - 0.5) > 0.25:
-            predicted_margin = raw_margin * 0.85
-        else:
-            predicted_margin = raw_margin
+        predicted_margin = raw_margin * 0.85 if abs(home_win_prob - 0.5) > 0.25 else raw_margin
 
         # 예측 승자
         predicted_winner = home_abbr if home_win_prob >= 0.5 else away_abbr
@@ -195,8 +194,8 @@ def create_daily_snapshot(target_date: Optional[date] = None) -> dict:
     # 스냅샷 데이터 구성
     snapshot_data = {
         "meta": {
-            "version": "1.0",
-            "model": "V4.4 (Logistic + Player EPM + B2B)",
+            "version": "2.0",
+            "model": "V5.2 (XGBoost + B2B + Rest Days + Injury)",
             "created_at": datetime.now(pytz.UTC).isoformat(),
             "game_date_et": target_date.isoformat(),
             "game_date_kst": (target_date + timedelta(days=1)).isoformat(),

@@ -1,0 +1,246 @@
+{
+  "meta": {
+    "version": "2.0",
+    "type": "pregame_prediction",
+    "model": {
+      "name": "V5.2 XGBoost",
+      "version": "5.2.0",
+      "n_features": 11,
+      "low_conf_accuracy": 0.74609375
+    },
+    "captured_at": "2025-12-02T14:27:38.865378+00:00",
+    "game_date_et": "2025-12-02",
+    "total_games": 6
+  },
+  "predictions": [
+    {
+      "game_id": "0022500318",
+      "game_time_et": "7:00 pm ET",
+      "home_team": "PHI",
+      "away_team": "WAS",
+      "home_team_id": 1610612755,
+      "away_team_id": 1610612764,
+      "prediction": {
+        "home_win_prob": 0.6362,
+        "base_prob": 0.6382,
+        "predicted_winner": "PHI",
+        "confidence": 0.2724
+      },
+      "features": {
+        "team_epm_diff": 7.8469,
+        "player_rotation_epm_diff": 1.2786999940872192,
+        "b2b_diff": -1,
+        "rest_days_diff": 1
+      },
+      "conditions": {
+        "home_b2b": false,
+        "away_b2b": true,
+        "home_injury_shift": 0.2,
+        "away_injury_shift": 0.0
+      },
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": 1.13,
+        "moneyline_away": 6.75,
+        "spread_home": -13.0,
+        "total_line": 234.5,
+        "fair_prob_home": 0.8566,
+        "fair_prob_away": 0.1434,
+        "edge_home": -0.2204,
+        "edge_away": 0.2204
+      }
+    },
+    {
+      "game_id": "0022500319",
+      "game_time_et": "7:30 pm ET",
+      "home_team": "TOR",
+      "away_team": "POR",
+      "home_team_id": 1610612761,
+      "away_team_id": 1610612757,
+      "prediction": {
+        "home_win_prob": 0.6154,
+        "base_prob": 0.6034,
+        "predicted_winner": "TOR",
+        "confidence": 0.2308
+      },
+      "features": {
+        "team_epm_diff": 3.1955,
+        "player_rotation_epm_diff": 0.7817999720573425,
+        "b2b_diff": 0,
+        "rest_days_diff": 0
+      },
+      "conditions": {
+        "home_b2b": false,
+        "away_b2b": false,
+        "home_injury_shift": 0.8,
+        "away_injury_shift": 2.0
+      },
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": 1.47,
+        "moneyline_away": 2.87,
+        "spread_home": -5.0,
+        "total_line": 232.0,
+        "fair_prob_home": 0.6613,
+        "fair_prob_away": 0.3387,
+        "edge_home": -0.0459,
+        "edge_away": 0.0459
+      }
+    },
+    {
+      "game_id": "0022500320",
+      "game_time_et": "8:00 pm ET",
+      "home_team": "BOS",
+      "away_team": "NYK",
+      "home_team_id": 1610612738,
+      "away_team_id": 1610612752,
+      "prediction": {
+        "home_win_prob": 0.5657,
+        "base_prob": 0.5657,
+        "predicted_winner": "BOS",
+        "confidence": 0.1313
+      },
+      "features": {
+        "team_epm_diff": 0.8053,
+        "player_rotation_epm_diff": -0.06889999657869339,
+        "b2b_diff": 0,
+        "rest_days_diff": 0
+      },
+      "conditions": {
+        "home_b2b": false,
+        "away_b2b": false,
+        "home_injury_shift": 0.0,
+        "away_injury_shift": 0.0
+      },
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": 1.99,
+        "moneyline_away": 1.91,
+        "spread_home": 1.0,
+        "total_line": 231.0,
+        "fair_prob_home": 0.4897,
+        "fair_prob_away": 0.5103,
+        "edge_home": 0.0759,
+        "edge_away": -0.0759
+      }
+    },
+    {
+      "game_id": "0022500321",
+      "game_time_et": "8:00 pm ET",
+      "home_team": "NOP",
+      "away_team": "MIN",
+      "home_team_id": 1610612740,
+      "away_team_id": 1610612750,
+      "prediction": {
+        "home_win_prob": 0.4453,
+        "base_prob": 0.4463,
+        "predicted_winner": "MIN",
+        "confidence": 0.1094
+      },
+      "features": {
+        "team_epm_diff": -12.0175,
+        "player_rotation_epm_diff": -3.0422000885009766,
+        "b2b_diff": 0,
+        "rest_days_diff": 0
+      },
+      "conditions": {
+        "home_b2b": false,
+        "away_b2b": false,
+        "home_injury_shift": 0.1,
+        "away_injury_shift": 0.0
+      },
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": 4.85,
+        "moneyline_away": 1.21,
+        "spread_home": 10.0,
+        "total_line": 234.5,
+        "fair_prob_home": 0.1997,
+        "fair_prob_away": 0.8003,
+        "edge_home": 0.2456,
+        "edge_away": -0.2456
+      }
+    },
+    {
+      "game_id": "0022500322",
+      "game_time_et": "8:00 pm ET",
+      "home_team": "SAS",
+      "away_team": "MEM",
+      "home_team_id": 1610612759,
+      "away_team_id": 1610612763,
+      "prediction": {
+        "home_win_prob": 0.6216,
+        "base_prob": 0.6216,
+        "predicted_winner": "SAS",
+        "confidence": 0.2432
+      },
+      "features": {
+        "team_epm_diff": -0.8502,
+        "player_rotation_epm_diff": 1.8651000261306763,
+        "b2b_diff": 0,
+        "rest_days_diff": 0
+      },
+      "conditions": {
+        "home_b2b": false,
+        "away_b2b": false,
+        "home_injury_shift": 0.0,
+        "away_injury_shift": 0.0
+      },
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": 1.51,
+        "moneyline_away": 2.74,
+        "spread_home": -5.5,
+        "total_line": 231.0,
+        "fair_prob_home": 0.6447,
+        "fair_prob_away": 0.3553,
+        "edge_home": -0.0231,
+        "edge_away": 0.0231
+      }
+    },
+    {
+      "game_id": "0022500323",
+      "game_time_et": "11:00 pm ET",
+      "home_team": "GSW",
+      "away_team": "OKC",
+      "home_team_id": 1610612744,
+      "away_team_id": 1610612760,
+      "prediction": {
+        "home_win_prob": 0.2994,
+        "base_prob": 0.3974,
+        "predicted_winner": "OKC",
+        "confidence": 0.4013
+      },
+      "features": {
+        "team_epm_diff": -10.2605,
+        "player_rotation_epm_diff": -2.666100025177002,
+        "b2b_diff": 0,
+        "rest_days_diff": 1
+      },
+      "conditions": {
+        "home_b2b": false,
+        "away_b2b": false,
+        "home_injury_shift": 11.0,
+        "away_injury_shift": 1.2
+      },
+      "odds": {
+        "bookmaker": "pinnacle",
+        "moneyline_home": 5.5,
+        "moneyline_away": 1.18,
+        "spread_home": 12.0,
+        "total_line": 222.5,
+        "fair_prob_home": 0.1766,
+        "fair_prob_away": 0.8234,
+        "edge_home": 0.1227,
+        "edge_away": -0.1227
+      }
+    }
+  ],
+  "chain": {
+    "sequence": 1,
+    "previous_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "predictions_hash": "57fa7bc1ae08ed6d1edc312b8b9bad2c046dfd88f09fe60937ff49337d557ee2",
+    "chain_hash": "9aaeac8d878d3a07703e93abda6a3e6999dd1abdf72ea4efda9afbc494282747",
+    "timestamp": "2025-12-02T14:27:38.865462+00:00"
+  }
+}
