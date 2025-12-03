@@ -65,9 +65,9 @@ def calculate_betting_edge(
     ev_home = model_prob * (ml_home - 1) - (1 - model_prob)
     ev_away = (1 - model_prob) * (ml_away - 1) - model_prob
 
-    if edge_home > 0.03:
+    if edge_home > 0.08:
         bet_side = 'home'
-    elif edge_away > 0.03:
+    elif edge_away > 0.08:
         bet_side = 'away'
     else:
         bet_side = 'none'
@@ -486,7 +486,7 @@ def _render_bottom_section(
                     with col2:
                         custom_edge = calculate_betting_edge(custom_prob / 100.0, ml_home, ml_away)
                         if custom_edge:
-                            if custom_edge['edge_home'] > 0.03:
+                            if custom_edge['edge_home'] > 0.08:
                                 rec_team = home_team
                                 rec_edge = custom_edge['edge_home']
                                 rec_ev = custom_edge['ev_home']
@@ -494,7 +494,7 @@ def _render_bottom_section(
                                 team_color = HOME_COLOR
                                 box_bg = f"linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(59, 130, 246, 0.05))"
                                 box_border = f"1px solid rgba(59, 130, 246, 0.4)"
-                            elif custom_edge['edge_away'] > 0.03:
+                            elif custom_edge['edge_away'] > 0.08:
                                 rec_team = away_team
                                 rec_edge = custom_edge['edge_away']
                                 rec_ev = custom_edge['ev_away']
@@ -524,7 +524,7 @@ def _render_bottom_section(
                                 che, cae = custom_edge['edge_home'], custom_edge['edge_away']
                                 st.markdown(f'''
                                     <div style="background: #1f293766; border: 1px solid #374151; border-radius: 10px; padding: 12px 16px; margin-top: 8px;">
-                                        <div style="color: #6b7280; font-size: 0.85rem; text-align: center;">Edge 3% 미만 - 베팅 미권장</div>
+                                        <div style="color: #6b7280; font-size: 0.85rem; text-align: center;">Edge 8% 미만 - 베팅 미권장</div>
                                         <div style="color: #4b5563; font-size: 0.7rem; text-align: center; margin-top: 2px;">{home_team} {che*100:+.1f}% | {away_team} {cae*100:+.1f}%</div>
                                     </div>
                                 ''', unsafe_allow_html=True)

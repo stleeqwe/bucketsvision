@@ -95,7 +95,8 @@ val_season = 2027                          # 26-27 시즌을 검증용으로 사
 ### 데이터 소스
 - **DNT API**: Team EPM, Player EPM, SOS (Strength of Schedule)
 - **NBA Stats API**: 경기 결과, 팀 스탯, 스케줄
-- **ESPN API**: 부상/결장 정보
+- **ESPN API**: 부상/결장 정보 (Primary)
+- **NBA PDF**: 공식 Injury Report (GTD 세분화: Probable/Questionable/Doubtful)
 - **Odds API**: 배당 정보
 
 ## V5.4 모델 아키텍처
@@ -120,14 +121,29 @@ val_season = 2027                          # 26-27 시즌을 검증용으로 사
 - **최대**: 94.8%
 - **압축 없음** (XGBoost 대비 넓은 확률 범위)
 
-### 후행 지표: Injury Impact v1.0.0
+### 후행 지표: Injury Impact v1.1.0
 | 항목 | 값 |
 |------|-----|
-| 버전 | 1.0.0 (2025-12-03) |
+| 버전 | 1.1.0 (2025-12-03) |
 | 알고리즘 | Performance-based (출전 vs 미출전 성과 비교) |
 | 공식 | `prob_shift = player_epm × 0.02 × normalized_diff` |
+| GTD 가중치 | `applied_shift = prob_shift × miss_probability` |
 | 폴백 | 결장 0경기 시 `prob_shift = player_epm × 0.02` |
 | 한도 | 없음 (확률 경계 1%~99%만 유지) |
+
+**GTD 상태별 가중치 (결장 확률):**
+| 상태 | 결장 확률 | 적용 비율 |
+|------|----------|----------|
+| Out | 100% | 100% |
+| Doubtful | 75% | 75% |
+| Questionable | 50% | 50% |
+| Probable | 25% | 25% |
+| GTD (기본) | 50% | 50% |
+
+**데이터 소스:**
+- **Primary**: ESPN Injury API (실시간)
+- **Secondary**: NBA 공식 Injury Report PDF (GTD 세분화)
+- NBA PDF 업데이트: 1PM, 5PM, 7PM, 9PM (ET)
 
 **적용 조건:**
 - EPM > 0, MPG ≥ 12, 출전율 > 1/3

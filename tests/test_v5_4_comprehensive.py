@@ -456,7 +456,7 @@ class TestInjuryImpact:
         with open(meta_path) as f:
             metadata = json.load(f)
 
-        assert metadata['version'] == '1.0.0'
+        assert metadata['version'] == '1.1.0'
         assert metadata['algorithm'] == 'Performance-based (출전 vs 미출전 성과 비교)'
 
     def test_injury_adjustment_no_limit(self, predictor):

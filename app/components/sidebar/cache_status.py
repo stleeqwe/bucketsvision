@@ -8,6 +8,8 @@ from typing import Dict
 
 import streamlit as st
 
+from app.utils.date_utils import get_current_time_kst
+
 
 def render_cache_status(cache_info: Dict) -> None:
     """
@@ -16,6 +18,9 @@ def render_cache_status(cache_info: Dict) -> None:
     Args:
         cache_info: 캐시 정보 딕셔너리
     """
+    # 마지막 갱신 시간 (session_state에서)
+    last_refresh = st.session_state.get("last_refresh_time", "앱 시작 시")
+
     st.markdown("##### 📊 데이터 상태")
     st.markdown(
         f"""
@@ -27,13 +32,13 @@ def render_cache_status(cache_info: Dict) -> None:
             margin-bottom: 10px;
         ">
             <div style="color: #9ca3af; margin-bottom: 4px;">
-                📅 데이터 기준
+                🔄 마지막 갱신
             </div>
             <div style="color: #22c55e; font-weight: bold;">
-                {cache_info['cache_date']} 05:00 ET
+                {last_refresh}
             </div>
             <div style="color: #6b7280; font-size: 0.7rem; margin-top: 8px;">
-                다음 갱신: {cache_info['next_refresh_et']}
+                현재: {cache_info.get('current_time_kst', '')}
             </div>
         </div>
         """,
@@ -45,10 +50,17 @@ def render_refresh_button() -> bool:
     """
     강제 새로고침 버튼 렌더링.
 
+    버튼 클릭 시 session_state에 갱신 시간 기록.
+
     Returns:
         True if button was clicked
     """
-    return st.button(
+    clicked = st.button(
         "🔄 강제 새로고침",
         help="캐시를 무시하고 최신 데이터를 가져옵니다"
     )
+
+    if clicked:
+        st.session_state["last_refresh_time"] = get_current_time_kst()
+
+    return clicked

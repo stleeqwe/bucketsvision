@@ -364,12 +364,12 @@ class TestInjuryImpactCalculation:
         if calc is None:
             pytest.skip("Advanced injury calculator not available (data insufficient)")
 
-    def test_version_is_1_0_0(self, project_paths):
-        """버전 1.0.0 확인"""
+    def test_version_is_1_1_0(self, project_paths):
+        """버전 1.1.0 확인"""
         meta_path = project_paths["model_dir"] / "injury_impact_v1_metadata.json"
         with open(meta_path) as f:
             metadata = json.load(f)
-        assert metadata['version'] == '1.0.0'
+        assert metadata['version'] == '1.1.0'
 
     def test_injury_summary_structure(self, loader, et_today, team_epm):
         """부상 요약 데이터 구조"""

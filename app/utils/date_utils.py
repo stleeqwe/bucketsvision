@@ -108,6 +108,7 @@ def get_cache_info() -> Dict[str, str]:
         - next_refresh_et: 다음 갱신 시간
     """
     now_et = datetime.now(ET)
+    now_kst = datetime.now(KST)
     cache_date = get_cache_date_key()
 
     # 다음 갱신 시간 계산
@@ -121,8 +122,14 @@ def get_cache_info() -> Dict[str, str]:
     return {
         "cache_date": cache_date,
         "current_time_et": now_et.strftime("%Y-%m-%d %H:%M ET"),
+        "current_time_kst": now_kst.strftime("%H:%M KST"),
         "next_refresh_et": next_refresh.strftime("%Y-%m-%d %H:%M ET"),
     }
+
+
+def get_current_time_kst() -> str:
+    """현재 KST 시간 문자열 반환"""
+    return datetime.now(KST).strftime("%H:%M:%S")
 
 
 def get_season_date_range(season_start: date, et_today: date, max_future_days: int = 7):

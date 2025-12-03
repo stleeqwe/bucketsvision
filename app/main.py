@@ -45,6 +45,11 @@ st.set_page_config(
 # 스타일 주입
 inject_all_styles()
 
+# 초기 갱신 시간 설정 (앱 시작 시)
+if "last_refresh_time" not in st.session_state:
+    from app.utils.date_utils import get_current_time_kst
+    st.session_state["last_refresh_time"] = get_current_time_kst()
+
 
 def main():
     """메인 함수"""

@@ -2,15 +2,22 @@
 데이터 로더 모듈.
 
 오늘 경기 스케줄과 팀 EPM 데이터를 로드합니다.
-V4.2: 팀 게임 로그에서 모멘텀, Four Factors, 리바운드 피처 추가
-V4.3: 선수 개별 EPM 피처 추가 (rotation EPM, bench strength)
+
+리팩토링 Phase 2: 모듈 분리 및 서비스 통합.
+- StatCalculator: 통계 계산 담당
+- InjuryService: 부상 정보 처리 담당
+- GameScheduleService: 경기 스케줄 조회 담당
 """
 
 import math
 import sys
+import warnings
 from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
+
+# 캐시 TTL 설정
+TEAM_EPM_CACHE_TTL_MINUTES = 60  # Team EPM: 1시간
 
 import numpy as np
 import pandas as pd
@@ -22,6 +29,7 @@ sys.path.insert(0, str(project_root))
 from app.services.dnt_api import DNTApiClient
 from src.data_collection.nba_stats_client import NBAStatsClient
 from src.data_collection.espn_injury_client import ESPNInjuryClient, ESPNInjury
+from src.data_collection.nba_injury_client import NBAInjuryClient, InjuryStatus
 from src.data_collection.odds_api_client import OddsAPIClient, GameOdds
 from src.features.injury_impact import InjuryImpactCalculator
 from src.features.advanced_injury_impact import (
@@ -37,9 +45,21 @@ from config.constants import TEAM_INFO, ABBR_TO_ID
 from app.services.feature_builders import V54FeatureBuilder
 from app.services.feature_builders.base_builder import FeatureBuildContext
 
+# 리팩토링 Phase 2: 새로운 서비스들
+from app.services.calculators import StatCalculator, PlayerStatCalculator
+from app.services.injury_service import InjuryService
+from app.services.game_schedule_service import GameScheduleService
+
 
 class DataLoader:
-    """데이터 로더"""
+    """
+    데이터 로더.
+
+    Phase 2 리팩토링으로 다음 서비스들에 위임:
+    - GameScheduleService: 경기 스케줄 조회
+    - InjuryService: 부상 정보 처리
+    - StatCalculator: 통계 계산
+    """
 
     def __init__(self, data_dir: Path):
         """
@@ -47,20 +67,60 @@ class DataLoader:
             data_dir: 데이터 디렉토리
         """
         self.data_dir = data_dir
+
+        # API 클라이언트
         self.nba_client = NBAStatsClient()
         self.espn_client = ESPNInjuryClient()
+        self.nba_injury_client = NBAInjuryClient()
         self.dnt_client = DNTApiClient()
         self.odds_client = OddsAPIClient()
 
+        # Phase 2: 새로운 서비스들 (위임 패턴)
+        self._game_schedule_service = GameScheduleService(self.nba_client)
+        self._injury_service = InjuryService(self.espn_client, self.nba_injury_client)
+
         # 캐시
         self._team_epm_date_cache: Dict[str, Dict[int, Dict]] = {}
+        self._team_epm_timestamp: Optional[datetime] = None
+        self._nba_injury_cache: Dict[str, Dict] = {}
         self._injury_calc: Optional[InjuryImpactCalculator] = None
         self._advanced_injury_calc: Optional[AdvancedInjuryImpactCalculator] = None
         self._team_game_logs_cache: Optional[pd.DataFrame] = None
-        self._player_game_logs_cache: Optional[pd.DataFrame] = None  # 선수 경기 로그
-        self._team_stats_cache: Dict[int, Dict] = {}  # V4 피처용 팀 통계
-        self._player_epm_cache: Dict[int, pd.DataFrame] = {}  # V4.3: 시즌별 선수 EPM
-        self._odds_cache: Optional[Dict[Tuple[str, str], GameOdds]] = None  # 배당 캐시
+        self._player_game_logs_cache: Optional[pd.DataFrame] = None
+        self._team_stats_cache: Dict[int, Dict] = {}
+        self._player_epm_cache: Dict[int, pd.DataFrame] = {}
+        self._odds_cache: Optional[Dict[Tuple[str, str], GameOdds]] = None
+
+    def clear_injury_caches(self) -> None:
+        """
+        부상 정보 캐시 초기화.
+
+        ESPN과 NBA 부상 클라이언트의 캐시를 모두 초기화합니다.
+        프론트엔드 새로고침 버튼에서 호출됩니다.
+        """
+        # Phase 2: InjuryService에 위임
+        self._injury_service.clear_cache()
+        self._nba_injury_cache = {}
+        self._injury_calc = None
+        self._advanced_injury_calc = None
+
+    def clear_all_api_caches(self) -> None:
+        """
+        모든 API 캐시 초기화.
+
+        Team EPM, 부상 정보, 배당 등 모든 API 캐시를 초기화합니다.
+        """
+        # Team EPM 캐시
+        self._team_epm_date_cache = {}
+        self._team_epm_timestamp = None
+
+        # 부상 캐시
+        self.clear_injury_caches()
+
+        # 배당 캐시
+        self._odds_cache = None
+
+        logger.info("All API caches cleared (Team EPM + Injury + Odds)")
 
     def get_team_info(self, team_id: int) -> Dict:
         """팀 정보 조회"""
@@ -109,6 +169,14 @@ class DataLoader:
         """배당 캐시 초기화 (새로고침 시)"""
         self._odds_cache = None
 
+    def _is_team_epm_cache_valid(self) -> bool:
+        """Team EPM 캐시 유효성 검사 (TTL 기반)"""
+        if not self._team_epm_date_cache or self._team_epm_timestamp is None:
+            return False
+
+        elapsed = datetime.now() - self._team_epm_timestamp
+        return elapsed < timedelta(minutes=TEAM_EPM_CACHE_TTL_MINUTES)
+
     def load_team_epm(self, target_date: Optional[date] = None) -> Dict[int, Dict]:
         """
         팀 EPM 데이터 로드 (DNT API에서).
@@ -122,9 +190,13 @@ class DataLoader:
         # 날짜별 캐시 키 생성
         cache_key = target_date.strftime("%Y-%m-%d") if target_date else "latest"
 
-        # 캐시에 있으면 반환
-        if cache_key in self._team_epm_date_cache:
+        # TTL 기반 캐시 검사
+        if cache_key in self._team_epm_date_cache and self._is_team_epm_cache_valid():
             return self._team_epm_date_cache[cache_key]
+
+        # TTL 만료 시 캐시 클리어
+        if not self._is_team_epm_cache_valid():
+            self._team_epm_date_cache = {}
 
         try:
             # DNT API에서 팀 EPM 로드
@@ -156,9 +228,10 @@ class DataLoader:
                     "team_alias": team_data.get("team_alias", ""),  # 팀 약어 추가
                 }
 
-            # 날짜별 캐시에 저장
+            # 날짜별 캐시에 저장 (TTL 타임스탬프 업데이트)
             self._team_epm_date_cache[cache_key] = epm_data
-            logger.info(f"Loaded EPM for {len(epm_data)} teams from DNT API (date={cache_key})")
+            self._team_epm_timestamp = datetime.now()
+            logger.info(f"Loaded EPM for {len(epm_data)} teams from DNT API (date={cache_key}, TTL={TEAM_EPM_CACHE_TTL_MINUTES}min)")
             return epm_data
 
         except Exception as e:
@@ -216,6 +289,69 @@ class DataLoader:
     def get_gtd_players(self, team_abbr: str) -> List[ESPNInjury]:
         """팀 GTD 선수 조회"""
         return self.espn_client.get_gtd_players(team_abbr)
+
+    def get_gtd_players_with_status(
+        self,
+        team_abbr: str,
+        target_date: Optional[date] = None
+    ) -> List[Dict]:
+        """
+        GTD 선수 조회 + NBA PDF로 세부 상태 확인.
+
+        ESPN의 Day-To-Day를 NBA 공식 Injury Report로 세분화:
+        - Probable: 출전 가능성 75%
+        - Questionable: 출전 가능성 50%
+        - Doubtful: 출전 가능성 25%
+
+        Returns:
+            [{"player_name", "espn_status", "nba_status", "play_probability", "miss_probability"}, ...]
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        espn_gtd = self.espn_client.get_gtd_players(team_abbr)
+
+        # NBA PDF 캐시 확인
+        cache_key = target_date.isoformat()
+        if cache_key not in self._nba_injury_cache:
+            try:
+                self._nba_injury_cache[cache_key] = self.nba_injury_client.fetch_injuries(target_date)
+            except Exception as e:
+                logger.warning(f"Failed to fetch NBA injury report: {e}")
+                self._nba_injury_cache[cache_key] = {}
+
+        nba_injuries = self._nba_injury_cache.get(cache_key, {})
+        nba_team_injuries = nba_injuries.get(team_abbr, [])
+
+        results = []
+        for espn_inj in espn_gtd:
+            player_name = espn_inj.player_name
+            result = {
+                "player_name": player_name,
+                "espn_status": espn_inj.status,
+                "nba_status": None,
+                "detail": espn_inj.detail,
+                # 기본값: ESPN GTD는 50% 출전 확률
+                "play_probability": 0.5,
+                "miss_probability": 0.5,
+            }
+
+            # NBA PDF에서 매칭 찾기
+            espn_name_lower = player_name.lower().strip()
+            for nba_inj in nba_team_injuries:
+                nba_name_lower = nba_inj.player_name.lower().strip()
+                # 정확한 매칭 또는 부분 매칭
+                if espn_name_lower == nba_name_lower or \
+                   espn_name_lower in nba_name_lower or \
+                   nba_name_lower in espn_name_lower:
+                    result["nba_status"] = nba_inj.status.value
+                    result["play_probability"] = nba_inj.status.play_probability
+                    result["miss_probability"] = 1.0 - nba_inj.status.play_probability
+                    break
+
+            results.append(result)
+
+        return results
 
     def get_injury_calculator(self) -> Optional[InjuryImpactCalculator]:
         """부상 영향 계산기 반환 (DNT API 실시간 데이터 사용)"""
@@ -1341,7 +1477,8 @@ class DataLoader:
         calc = self.get_advanced_injury_calculator(target_date, team_epm)
 
         out_injuries = self.get_injuries(team_abbr)
-        gtd_injuries = self.get_gtd_players(team_abbr)
+        # NBA PDF로 세분화된 GTD 상태 조회
+        gtd_with_status = self.get_gtd_players_with_status(team_abbr, target_date)
 
         out_details = []
         gtd_details = []
@@ -1380,39 +1517,48 @@ class DataLoader:
                     "prob_shift": 0.0,
                 })
 
-        for inj in gtd_injuries:
+        for gtd_info in gtd_with_status:
+            player_name = gtd_info["player_name"]
+            # NBA PDF에서 세분화된 상태 (Probable 25%, Questionable 50%, Doubtful 75%)
+            miss_prob = gtd_info["miss_probability"]
+            nba_status = gtd_info.get("nba_status") or "GTD"
+
             if calc:
-                result = calc.calculate_player_impact(inj.player_name, team_abbr)
+                result = calc.calculate_player_impact(player_name, team_abbr)
                 if result.is_valid:
-                    # GTD는 50%만 반영 (출전 불확실)
-                    gtd_impact = result.prob_shift * 0.5
+                    # 세분화된 상태별 가중치 적용
+                    # Out: 100%, Probable: 25%, Questionable: 50%, Doubtful: 75%
+                    gtd_impact = result.prob_shift * miss_prob
                     total_impact += gtd_impact
                     gtd_details.append({
-                        "name": inj.player_name,
-                        "status": "GTD",
-                        "detail": inj.detail,
+                        "name": player_name,
+                        "status": nba_status,
+                        "detail": gtd_info.get("detail"),
                         "epm": round(result.epm, 2),
                         "mpg": round(result.mpg, 1),
                         "prob_shift": round(result.prob_shift * 100, 1),  # 원래 영향력 (%)
-                        "applied_shift": round(gtd_impact * 100, 1),  # 실제 반영된 영향력 (50%)
+                        "applied_shift": round(gtd_impact * 100, 1),  # 실제 반영된 영향력
+                        "miss_probability": round(miss_prob * 100, 0),  # 결장 확률 (%)
                         "played_games": result.played_games,
                         "missed_games": result.missed_games,
                         "schedule_diff": round(result.schedule_diff, 3),  # 성과 차이
                     })
                 else:
                     gtd_details.append({
-                        "name": inj.player_name,
-                        "status": "GTD",
-                        "detail": inj.detail,
+                        "name": player_name,
+                        "status": nba_status,
+                        "detail": gtd_info.get("detail"),
                         "prob_shift": 0.0,
+                        "miss_probability": round(miss_prob * 100, 0),
                         "skip_reason": result.skip_reason,
                     })
             else:
                 gtd_details.append({
-                    "name": inj.player_name,
-                    "status": "GTD",
-                    "detail": inj.detail,
+                    "name": player_name,
+                    "status": nba_status,
+                    "detail": gtd_info.get("detail"),
                     "prob_shift": 0.0,
+                    "miss_probability": round(miss_prob * 100, 0),
                 })
 
         return {

@@ -67,7 +67,22 @@ def get_prediction_pipeline(_cache_key: str):
 
 
 def clear_all_caches():
-    """모든 Streamlit 캐시 클리어"""
+    """
+    모든 Streamlit 캐시 클리어.
+
+    API 캐시(Team EPM, 부상 정보, 배당)도 함께 초기화합니다.
+    """
+    from app.utils.date_utils import get_cache_date_key
+
+    # API 캐시 초기화 (Streamlit 캐시 클리어 전에 호출)
+    try:
+        cache_key = get_cache_date_key()
+        loader = get_data_loader(cache_key)
+        loader.clear_all_api_caches()
+    except Exception:
+        pass  # 로더가 없으면 무시
+
+    # Streamlit 캐시 클리어
     st.cache_data.clear()
     st.cache_resource.clear()
 

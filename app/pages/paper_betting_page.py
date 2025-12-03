@@ -39,7 +39,7 @@ def render_paper_betting_page(project_root: Optional[Path] = None) -> None:
     _render_summary_stats(summary)
 
     # 설정 정보
-    edge_threshold = metadata.get("edge_threshold", 0.05)
+    edge_threshold = metadata.get("edge_threshold", 0.08)
     unit_size = metadata.get("unit_size", 100)
     st.caption(f"⚙️ Edge 기준: ≥{edge_threshold * 100:.0f}% | Unit: ${unit_size}")
 

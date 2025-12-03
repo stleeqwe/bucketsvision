@@ -9,12 +9,17 @@ https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from difflib import SequenceMatcher
 
 import requests
 
 from src.utils.logger import logger
+
+
+# 캐시 TTL (30분)
+CACHE_TTL_MINUTES = 30
 
 
 @dataclass
@@ -53,11 +58,20 @@ class ESPNInjuryClient:
 
     def __init__(self):
         self._cache: Dict[str, List[ESPNInjury]] = {}
+        self._cache_timestamp: Optional[datetime] = None
 
     def _normalize_team_abbr(self, abbr: str) -> str:
         """ESPN 팀 약어를 표준 약어로 변환"""
         abbr = abbr.upper()
         return self.TEAM_ABBR_MAP.get(abbr, abbr)
+
+    def _is_cache_valid(self) -> bool:
+        """캐시 유효성 검사 (TTL 기반)"""
+        if not self._cache or self._cache_timestamp is None:
+            return False
+
+        elapsed = datetime.now() - self._cache_timestamp
+        return elapsed < timedelta(minutes=CACHE_TTL_MINUTES)
 
     def fetch_all_injuries(self, force_refresh: bool = False) -> Dict[str, List[ESPNInjury]]:
         """
@@ -69,7 +83,8 @@ class ESPNInjuryClient:
         Returns:
             팀 약어 -> 부상 리스트 딕셔너리
         """
-        if self._cache and not force_refresh:
+        # TTL 기반 캐시 검사
+        if not force_refresh and self._is_cache_valid():
             return self._cache
 
         url = f"{self.BASE_URL}/injuries"
@@ -122,7 +137,8 @@ class ESPNInjuryClient:
                     self._cache[team_abbr].append(injury_record)
 
             total_injuries = sum(len(v) for v in self._cache.values())
-            logger.info(f"ESPN: Loaded {total_injuries} injuries for {len(self._cache)} teams")
+            self._cache_timestamp = datetime.now()
+            logger.info(f"ESPN: Loaded {total_injuries} injuries for {len(self._cache)} teams (TTL: {CACHE_TTL_MINUTES}min)")
 
         except Exception as e:
             logger.error(f"ESPN API error: {e}")
@@ -196,6 +212,7 @@ class ESPNInjuryClient:
     def clear_cache(self) -> None:
         """캐시 초기화"""
         self._cache = {}
+        self._cache_timestamp = None
 
 
 def fuzzy_match_name(name1: str, name2: str, threshold: float = 0.8) -> bool:
