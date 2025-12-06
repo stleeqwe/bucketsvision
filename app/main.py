@@ -111,15 +111,26 @@ def _render_sidebar():
 
             st.markdown("---")
 
-            # 모델 정보
+            # 모델 정보 + 실시간 정확도
             predictor = get_prediction_service()
-            render_model_info(predictor.get_model_info())
+            cache_key = get_cache_date_key()
+            loader = get_data_loader(cache_key)
+
+            # 실시간 정확도 계산 (세션 캐시 사용)
+            if "realtime_accuracy" not in st.session_state:
+                with st.spinner("정확도 계산 중..."):
+                    st.session_state["realtime_accuracy"] = loader.calculate_realtime_accuracy()
+
+            render_model_info(predictor.get_model_info(), st.session_state.get("realtime_accuracy"))
 
             st.markdown("---")
 
             # 캐시 상태
             render_cache_status(get_cache_info())
             if render_refresh_button():
+                # 실시간 정확도 캐시도 클리어
+                if "realtime_accuracy" in st.session_state:
+                    del st.session_state["realtime_accuracy"]
                 clear_all_caches()
                 st.rerun()
 

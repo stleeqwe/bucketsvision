@@ -49,6 +49,10 @@ class V5PredictionService:
     # 부상 보정 최대 한도
     MAX_INJURY_SHIFT = 0.10  # ±10%p
 
+    # 캘리브레이션 설정 (Under-confident 보정)
+    CALIBRATION_ENABLED = True
+    CALIBRATION_STRETCH_FACTOR = 1.15  # 50% 기준 확률 확장 계수
+
     def __init__(self, model_dir: Path):
         """
         Args:
@@ -96,7 +100,7 @@ class V5PredictionService:
             features: 피처 딕셔너리 (5개)
 
         Returns:
-            홈팀 승리 확률 (0-1)
+            홈팀 승리 확률 (0-1), 캘리브레이션 적용됨
         """
         if self.model is None or self.scaler is None:
             raise RuntimeError("Model not loaded")
@@ -106,9 +110,31 @@ class V5PredictionService:
         X_scaled = self.scaler.transform(X)
 
         # 확률 예측
-        proba = self.model.predict_proba(X_scaled)[0, 1]
+        raw_proba = self.model.predict_proba(X_scaled)[0, 1]
 
-        return float(proba)
+        # 캘리브레이션 적용 (Under-confident 보정)
+        if self.CALIBRATION_ENABLED:
+            return self._calibrate(raw_proba)
+
+        return float(raw_proba)
+
+    def _calibrate(self, prob: float) -> float:
+        """
+        Under-confident 보정을 위한 확률 스트레칭.
+
+        원리: 50% 기준으로 확률을 양방향으로 확장
+        - 60% → 61.5% (더 확신)
+        - 40% → 38.5% (더 확신)
+        - 50% → 50% (변화 없음)
+
+        Args:
+            prob: 원본 예측 확률 (0-1)
+
+        Returns:
+            보정된 확률 (1%-99% 범위로 클리핑)
+        """
+        calibrated = 0.5 + (prob - 0.5) * self.CALIBRATION_STRETCH_FACTOR
+        return max(0.01, min(0.99, calibrated))
 
     def apply_injury_adjustment(
         self,
@@ -199,4 +225,6 @@ class V5PredictionService:
             "overall_accuracy": self.metadata.get("metrics", {}).get("overall_accuracy") if self.metadata else None,
             "trailing_indicators": ["injury_adjustment"],
             "prob_range": self.metadata.get("metrics", {}).get("prob_range") if self.metadata else [0.08, 0.95],
+            "calibration_enabled": self.CALIBRATION_ENABLED,
+            "calibration_factor": self.CALIBRATION_STRETCH_FACTOR if self.CALIBRATION_ENABLED else None,
         }

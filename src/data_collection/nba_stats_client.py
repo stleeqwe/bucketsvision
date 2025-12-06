@@ -221,7 +221,8 @@ class NBAStatsClient:
     def get_schedule(
         self,
         season: int,
-        season_type: str = "Regular Season"
+        season_type: str = "Regular Season",
+        use_cache: bool = True
     ) -> pd.DataFrame:
         """
         시즌 경기 일정 조회.
@@ -229,6 +230,7 @@ class NBAStatsClient:
         Args:
             season: 시즌 연도 (예: 2025 for 24-25)
             season_type: 시즌 타입
+            use_cache: 캐시 사용 여부 (오늘 경기 조회 시 False 권장)
 
         Returns:
             경기 일정 DataFrame
@@ -242,7 +244,7 @@ class NBAStatsClient:
         }
 
         try:
-            data = self._make_request("leaguegamefinder", params)
+            data = self._make_request("leaguegamefinder", params, use_cache=use_cache)
             df = self._parse_response(data)
 
             if df.empty:

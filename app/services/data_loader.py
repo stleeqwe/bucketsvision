@@ -1566,3 +1566,295 @@ class DataLoader:
             "gtd_players": gtd_details,
             "total_prob_shift": round(total_impact * 100, 1),  # %로 변환 (승률 감소)
         }
+
+    # =========================================================================
+    # 실시간 시즌 정확도 계산
+    # =========================================================================
+
+    def calculate_realtime_accuracy(self, season: int = 2026) -> Optional[Dict]:
+        """
+        현재 시즌 완료 경기 대상 실시간 정확도 계산.
+
+        V5.4 모델을 사용하여 완료된 경기의 예측 정확도를 실시간으로 계산합니다.
+        UI 사이드바에 표시됩니다.
+
+        Args:
+            season: 시즌 연도 (기본값: 2026 = 25-26 시즌)
+
+        Returns:
+            {
+                "accuracy": float,           # 전체 정확도 (0-1)
+                "total_games": int,          # 총 경기 수
+                "correct_predictions": int,  # 정확 예측 수
+                "high_conf_accuracy": float, # 고신뢰(>=70%) 정확도
+                "high_conf_games": int,      # 고신뢰 경기 수
+                "low_conf_accuracy": float,  # 저신뢰(<70%) 정확도
+                "low_conf_games": int,       # 저신뢰 경기 수
+            }
+            또는 데이터 부족 시 None
+        """
+        import pickle
+        import json
+
+        try:
+            # 1. V5.4 모델 로드
+            model_dir = self.data_dir.parent / "bucketsvision_v4" / "models"
+            model_path = model_dir / "v5_4_model.pkl"
+            scaler_path = model_dir / "v5_4_scaler.pkl"
+            feature_path = model_dir / "v5_4_feature_names.json"
+
+            if not all(p.exists() for p in [model_path, scaler_path, feature_path]):
+                logger.warning("V5.4 model files not found")
+                return None
+
+            with open(model_path, "rb") as f:
+                model = pickle.load(f)
+            with open(scaler_path, "rb") as f:
+                scaler = pickle.load(f)
+            with open(feature_path) as f:
+                feature_names = json.load(f)
+
+            # 2. 완료된 경기 조회
+            schedule_df = self.nba_client.get_schedule(season=season, use_cache=False)
+
+            if schedule_df.empty:
+                logger.warning(f"No schedule data for season {season}")
+                return None
+
+            # 완료된 경기만 (result가 W 또는 L)
+            completed = schedule_df[schedule_df['result'].isin(['W', 'L'])].copy()
+            if completed.empty:
+                logger.info("No completed games yet")
+                return None
+
+            # 홈팀 경기만 선택 (각 경기당 홈/어웨이 2행)
+            home_games = completed[completed['matchup'].str.contains(' vs. ', na=False)]
+
+            if home_games.empty:
+                return None
+
+            logger.info(f"Calculating accuracy for {len(home_games)} completed games")
+
+            # 3. 피처 계산에 필요한 데이터 로드
+            # Team EPM
+            team_epm_raw = self.dnt_client.get_team_epm()
+            team_epm_dict = {row['team_id']: row['team_epm'] for row in team_epm_raw}
+            sos_dict = {row['team_id']: row['sos'] for row in team_epm_raw}
+
+            # Player EPM
+            player_epm_raw = self.dnt_client.get_season_epm(season=season)
+            player_epm_df = pd.DataFrame(player_epm_raw) if player_epm_raw else pd.DataFrame()
+
+            # 팀 게임 로그 (FT Rate 계산용)
+            team_logs = self.nba_client.get_team_game_logs(season=season)
+            if not team_logs.empty:
+                # 컬럼명 정규화
+                column_mapping = {
+                    'TEAM_ID': 'team_id',
+                    'GAME_ID': 'game_id',
+                    'GAME_DATE': 'game_date',
+                    'FTM': 'ft',
+                    'FTA': 'fta',
+                    'FGA': 'fga',
+                }
+                rename_dict = {k: v for k, v in column_mapping.items() if k in team_logs.columns}
+                team_logs = team_logs.rename(columns=rename_dict)
+                team_logs['game_date'] = pd.to_datetime(team_logs['game_date'])
+
+            # 4. 각 경기 예측 및 검증
+            results = []
+
+            for _, home_row in home_games.iterrows():
+                game_id = home_row['game_id']
+                home_team_id = home_row['team_id']
+                home_result = home_row['result']
+                home_won = (home_result == 'W')
+                game_date_str = home_row.get('game_date')
+
+                # 어웨이팀 찾기
+                away_row = completed[
+                    (completed['game_id'] == game_id) &
+                    (completed['team_id'] != home_team_id)
+                ]
+                if away_row.empty:
+                    continue
+                away_team_id = away_row.iloc[0]['team_id']
+
+                try:
+                    # 경기 날짜 파싱
+                    if isinstance(game_date_str, str):
+                        game_date = datetime.strptime(game_date_str[:10], '%Y-%m-%d').date()
+                    elif hasattr(game_date_str, 'date'):
+                        game_date = game_date_str.date()
+                    else:
+                        game_date = date.today()
+
+                    # 피처 생성
+                    features = self._build_accuracy_features(
+                        home_team_id, away_team_id, game_date,
+                        team_epm_dict, sos_dict, player_epm_df, team_logs
+                    )
+
+                    # 예측
+                    X = np.array([[features.get(f, 0.0) for f in feature_names]])
+                    X_scaled = scaler.transform(X)
+                    prob = model.predict_proba(X_scaled)[0, 1]
+
+                    # 결과
+                    predicted_home_win = prob >= 0.5
+                    is_correct = (predicted_home_win == home_won)
+                    confidence = max(prob, 1 - prob)
+
+                    results.append({
+                        'is_correct': is_correct,
+                        'confidence': confidence,
+                        'is_high_conf': confidence >= 0.70,
+                    })
+
+                except Exception as e:
+                    logger.debug(f"Error processing game {game_id}: {e}")
+                    continue
+
+            if not results:
+                logger.warning("No valid predictions")
+                return None
+
+            # 5. 정확도 계산
+            df = pd.DataFrame(results)
+
+            total_games = len(df)
+            correct = df['is_correct'].sum()
+            accuracy = correct / total_games
+
+            # 고신뢰 (>=70%)
+            high_conf = df[df['is_high_conf']]
+            high_conf_games = len(high_conf)
+            high_conf_correct = high_conf['is_correct'].sum() if high_conf_games > 0 else 0
+            high_conf_accuracy = high_conf_correct / high_conf_games if high_conf_games > 0 else 0
+
+            # 저신뢰 (<70%)
+            low_conf = df[~df['is_high_conf']]
+            low_conf_games = len(low_conf)
+            low_conf_correct = low_conf['is_correct'].sum() if low_conf_games > 0 else 0
+            low_conf_accuracy = low_conf_correct / low_conf_games if low_conf_games > 0 else 0
+
+            result = {
+                "accuracy": round(accuracy, 4),
+                "total_games": total_games,
+                "correct_predictions": int(correct),
+                "high_conf_accuracy": round(high_conf_accuracy, 4) if high_conf_games > 0 else None,
+                "high_conf_games": high_conf_games,
+                "low_conf_accuracy": round(low_conf_accuracy, 4) if low_conf_games > 0 else None,
+                "low_conf_games": low_conf_games,
+            }
+
+            logger.info(f"Realtime accuracy: {accuracy*100:.1f}% ({correct}/{total_games})")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error calculating realtime accuracy: {e}")
+            return None
+
+    def _build_accuracy_features(
+        self,
+        home_team_id: int,
+        away_team_id: int,
+        game_date: date,
+        team_epm_dict: Dict[int, float],
+        sos_dict: Dict[int, float],
+        player_epm_df: pd.DataFrame,
+        team_logs: pd.DataFrame
+    ) -> Dict[str, float]:
+        """
+        정확도 계산용 V5.4 피처 생성.
+
+        Args:
+            home_team_id: 홈팀 ID
+            away_team_id: 원정팀 ID
+            game_date: 경기 날짜
+            team_epm_dict: 팀 EPM 딕셔너리
+            sos_dict: SOS 딕셔너리
+            player_epm_df: 선수 EPM DataFrame
+            team_logs: 팀 게임 로그 DataFrame
+
+        Returns:
+            V5.4 피처 딕셔너리 (5개)
+        """
+        # team_epm_diff
+        home_epm = team_epm_dict.get(home_team_id, 0)
+        away_epm = team_epm_dict.get(away_team_id, 0)
+        team_epm_diff = home_epm - away_epm
+
+        # sos_diff
+        home_sos = sos_dict.get(home_team_id, 0)
+        away_sos = sos_dict.get(away_team_id, 0)
+        sos_diff = home_sos - away_sos
+
+        # top5_epm_diff
+        home_top5 = self._calc_top5_epm_for_accuracy(player_epm_df, home_team_id)
+        away_top5 = self._calc_top5_epm_for_accuracy(player_epm_df, away_team_id)
+        top5_epm_diff = home_top5 - away_top5
+
+        # bench_strength_diff
+        home_bench = self._calc_bench_strength_for_accuracy(player_epm_df, home_team_id)
+        away_bench = self._calc_bench_strength_for_accuracy(player_epm_df, away_team_id)
+        bench_strength_diff = home_bench - away_bench
+
+        # ft_rate_diff (해당 경기 이전 10경기 기준)
+        ft_rate_diff = 0.0
+        if not team_logs.empty:
+            game_dt = pd.Timestamp(game_date)
+
+            home_logs = team_logs[
+                (team_logs['team_id'] == home_team_id) &
+                (team_logs['game_date'] < game_dt)
+            ].sort_values('game_date', ascending=False).head(10)
+
+            away_logs = team_logs[
+                (team_logs['team_id'] == away_team_id) &
+                (team_logs['game_date'] < game_dt)
+            ].sort_values('game_date', ascending=False).head(10)
+
+            home_ft_rate = self._calc_ft_rate_for_accuracy(home_logs)
+            away_ft_rate = self._calc_ft_rate_for_accuracy(away_logs)
+            ft_rate_diff = home_ft_rate - away_ft_rate
+
+        return {
+            'team_epm_diff': team_epm_diff,
+            'sos_diff': sos_diff,
+            'bench_strength_diff': bench_strength_diff,
+            'top5_epm_diff': top5_epm_diff,
+            'ft_rate_diff': ft_rate_diff,
+        }
+
+    def _calc_top5_epm_for_accuracy(self, player_epm: pd.DataFrame, team_id: int) -> float:
+        """상위 5명 선수(MPG 기준)의 평균 EPM"""
+        if player_epm.empty:
+            return 0.0
+        team_players = player_epm[player_epm['team_id'] == team_id]
+        if len(team_players) < 5:
+            return 0.0
+        return team_players.nlargest(5, 'mpg')['tot'].mean()
+
+    def _calc_bench_strength_for_accuracy(self, player_epm: pd.DataFrame, team_id: int) -> float:
+        """벤치 선수(6-10번째 MPG)의 평균 EPM"""
+        if player_epm.empty:
+            return -2.0
+        team_players = player_epm[player_epm['team_id'] == team_id]
+        if len(team_players) < 6:
+            return -2.0
+        sorted_players = team_players.nlargest(10, 'mpg')
+        bench = sorted_players.iloc[5:10] if len(sorted_players) >= 10 else sorted_players.iloc[5:]
+        if len(bench) == 0:
+            return -2.0
+        return bench['tot'].mean()
+
+    def _calc_ft_rate_for_accuracy(self, games: pd.DataFrame) -> float:
+        """FT Rate 계산: FTM / FGA"""
+        if len(games) == 0:
+            return 0.20
+        ft = games['ft'].sum() if 'ft' in games.columns else 0
+        fga = games['fga'].sum() if 'fga' in games.columns else 0
+        if fga == 0:
+            return 0.20
+        return ft / fga
